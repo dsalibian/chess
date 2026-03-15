@@ -36,20 +36,6 @@ u32 lzcnt(const u64 x) {
     return __builtin_clzll(x);
 }
 
-#ifdef __BMI2__
-
-#include <immintrin.h>
-
-u64 pext(u64 x, u64 m) {
-    return _pext_u64(x, m);
-}
-
-#endif
-
-u64 iso_lsb(const u64 x) {
-    return x & -x;
-}
-
 u64 pop_lsb(const u64 x) {
     return x & (x - 1);
 }
@@ -170,8 +156,10 @@ bitboard shift(bitboard bb, const u32 dir) {
 
 #ifdef __BMI2__
 
-#define RATTS_BB(s, all)    (_satts[s][false][pext(all, _relevant[s][false])])
-#define BATTS_BB(s, all)    (_satts[s][true ][pext(all, _relevant[s][true])])
+#include <immintrin.h>
+
+#define RATTS_BB(s, all)    (_satts[s][false][_pext_u64(all, _relevant[s][false])])
+#define BATTS_BB(s, all)    (_satts[s][true ][_pext_u64(all, _relevant[s][true])])
 
 #else 
     
