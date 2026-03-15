@@ -5,8 +5,8 @@
 #include <ctype.h>
 #include <assert.h>
 #include <string.h>
+#include <stdlib.h>
 #include <time.h>
-#include <immintrin.h>
 
 typedef uint64_t u64;
 typedef uint32_t u32;
@@ -36,20 +36,15 @@ u32 lzcnt(const u64 x) {
     return __builtin_clzll(x);
 }
 
-u64 pext(u64 x, u64 m) {
 #ifdef __BMI2__
-    return _pext_u64(x, m);
-#else
-    u64 r = 0;
-    for(u64 bb = 1; m; bb += bb) {
-        if(x & m & -m)
-            r |= bb;
-        m &= m - 1;
-    }
 
-    return r;
-#endif
+#include <immintrin.h>
+
+u64 pext(u64 x, u64 m) {
+    return _pext_u64(x, m);
 }
+
+#endif
 
 u64 iso_lsb(const u64 x) {
     return x & -x;
@@ -173,17 +168,26 @@ bitboard shift(bitboard bb, const u32 dir) {
 
 #include "tables.h"
 
-#define RATTS_BB(s, all) (_slide_atts[s][false][pext(all, _slide_relevant[s][false])])
-#define BATTS_BB(s, all) (_slide_atts[s][true ][pext(all, _slide_relevant[s][true])])
+#ifdef __BMI2__
 
-#define QATTS_BB(s, all) (RATTS_BB(s, all) | BATTS_BB(s, all))
+#define RATTS_BB(s, all)    (_satts[s][false][pext(all, _relevant[s][false])])
+#define BATTS_BB(s, all)    (_satts[s][true ][pext(all, _relevant[s][true])])
+
+#else 
+    
+#define RATTS_BB(s, all)    (_satts[s][false][(_magic[s][false] * (all & _relevant[s][false])) >> _shamt[s][false]])
+#define BATTS_BB(s, all)    (_satts[s][true ][(_magic[s][true ] * (all & _relevant[s][true ])) >> _shamt[s][true]])
+
+#endif
+
+#define QATTS_BB(s, all)    (RATTS_BB(s, all) | BATTS_BB(s, all))
 
 #define PATTS_BB(s, turn)   (_patts[s][turn])
 #define KATTS_BB(s)         (_katts[s])
 #define NATTS_BB(s)         (_natts[s])
 
-#define BETWEEN_BB(a, b) (_between[a][b])
-#define THROUGH_BB(a, b) (_through[a][b])
+#define BETWEEN_BB(a, b)    (_between[a][b])
+#define THROUGH_BB(a, b)    (_through[a][b])
 
 
 
@@ -290,13 +294,13 @@ struct position {
     bool turn;
 };
 
-#define POS_COLORBB(p, c) ((p)->color[c]) 
-#define POS_TYPEBB(p, pt) ((p)->type[pt]) 
+#define COLOR_BB(p, c)          ((p)->color[c]) 
+#define TYPE_BB(p, pt)          ((p)->type[pt]) 
 
-#define POS_PCBB(p, pt, c) (POS_TYPEBB(p, pt) & POS_COLORBB(p, c))
-#define POS_SLIDERSBB(p, pt, c) ((POS_TYPEBB(p, pt) | POS_TYPEBB(p, QUEEN)) & POS_COLORBB(p, c))
+#define SLIDERS_BB(p, pt, c)    ((TYPE_BB(p, pt) | TYPE_BB(p, QUEEN)) & COLOR_BB(p, c))
+#define PC_BB(p, pt, c)         (TYPE_BB(p, pt) & COLOR_BB(p, c))
 
-#define POS_ALLBB(p) (POS_COLORBB(p, WHITE) | POS_COLORBB(p, BLACK))
+#define ALL_BB(p)               (COLOR_BB(p, WHITE) | COLOR_BB(p, BLACK))
 
 void pos_fen(struct position* p, const char* fen) {
     const char startpos[] = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -407,11 +411,11 @@ void pos_print(const struct position* p) {
 
 bool sqr_attd(const struct position* p, const u32 sqr, const bool color) {
     return  
-        (KATTS_BB(sqr)               & sqr_bb       (p->ksqr[color]))  || 
-        (PATTS_BB(sqr, !color)       & POS_PCBB     (p, PAWN,  color)) || 
-        (NATTS_BB(sqr)               & POS_PCBB     (p, NIGHT, color)) || 
-        (BATTS_BB(sqr, POS_ALLBB(p)) & POS_SLIDERSBB(p, BISHP, color)) || 
-        (RATTS_BB(sqr, POS_ALLBB(p)) & POS_SLIDERSBB(p, ROOK,  color));
+        (KATTS_BB(sqr)            & sqr_bb    (p->ksqr[color]))  || 
+        (PATTS_BB(sqr, !color)    & PC_BB     (p, PAWN,  color)) || 
+        (NATTS_BB(sqr)            & PC_BB     (p, NIGHT, color)) || 
+        (BATTS_BB(sqr, ALL_BB(p)) & SLIDERS_BB(p, BISHP, color)) || 
+        (RATTS_BB(sqr, ALL_BB(p)) & SLIDERS_BB(p, ROOK,  color));
 }
 
 bitboard gencheckers(const struct position* p) {
@@ -419,24 +423,24 @@ bitboard gencheckers(const struct position* p) {
     const u32 s  = p->ksqr[c];
 
     return  
-        (PATTS_BB(s, c)            & POS_PCBB     (p, PAWN,  !c)) | 
-        (NATTS_BB(s)               & POS_PCBB     (p, NIGHT, !c)) | 
-        (BATTS_BB(s, POS_ALLBB(p)) & POS_SLIDERSBB(p, BISHP, !c)) | 
-        (RATTS_BB(s, POS_ALLBB(p)) & POS_SLIDERSBB(p, ROOK,  !c));
+        (PATTS_BB(s, c)         & PC_BB     (p, PAWN,  !c)) | 
+        (NATTS_BB(s)            & PC_BB     (p, NIGHT, !c)) | 
+        (BATTS_BB(s, ALL_BB(p)) & SLIDERS_BB(p, BISHP, !c)) | 
+        (RATTS_BB(s, ALL_BB(p)) & SLIDERS_BB(p, ROOK,  !c));
 }
 
 bitboard genpins(const struct position* p) {
     const bool color = p->turn;
     const u32 ks = p->ksqr[color];
 
-    const bitboard potentially_pinned = QATTS_BB(ks, POS_ALLBB(p)) & POS_COLORBB(p, color);
-    const bitboard all_nopinned       = POS_ALLBB(p) ^ potentially_pinned;
+    const bitboard potentially_pinned = QATTS_BB(ks, ALL_BB(p)) & COLOR_BB(p, color);
+    const bitboard all_nopinned       = ALL_BB(p) ^ potentially_pinned;
 
     const bitboard xray_b = BATTS_BB(ks, all_nopinned);
     const bitboard xray_r = RATTS_BB(ks, all_nopinned);
 
-    const bitboard opps_b = POS_SLIDERSBB(p, BISHP, !color);
-    const bitboard opps_r = POS_SLIDERSBB(p, ROOK,  !color);
+    const bitboard opps_b = SLIDERS_BB(p, BISHP, !color);
+    const bitboard opps_r = SLIDERS_BB(p, ROOK,  !color);
 
     bitboard pinner = (xray_b & opps_b) | (xray_r & opps_r);
 
@@ -459,7 +463,7 @@ void makemv(struct position* p, const struct move m) {
     const bool turn         = p->turn;
     const bool w            = turn == WHITE;
 
-    const bitboard opps     = POS_COLORBB(p, !turn);
+    const bitboard opps     = COLOR_BB(p, !turn);
     const u32 ep            = p->ep_target;
 
     p->ep_target            = 0;
@@ -475,7 +479,6 @@ void makemv(struct position* p, const struct move m) {
             p->type[pt] &= ~to_bb;
     }
 
-    u32 promot;
     switch(moved) {
         case KING:
             p->ksqr[turn] = to;
@@ -496,9 +499,9 @@ void makemv(struct position* p, const struct move m) {
             break;
 
         case PAWN:
-            if((promot = m.promo)) {
-                p->type[PAWN]   ^= to_bb;
-                p->type[promot] ^= to_bb;
+            if(m.promo) {
+                p->type[PAWN]    ^= to_bb;
+                p->type[m.promo] ^= to_bb;
             }
 
             else if(to == ep) {
@@ -524,33 +527,33 @@ void makemv(struct position* p, const struct move m) {
 
 
 
-void genmoves_push_mvbb(struct mstack* ms, const struct position* p, const u32 mt, const u32 from, bitboard bb) {
+void genmvs_push_mvbb(struct mstack* ms, const struct position* p, const u32 mt, const u32 from, bitboard bb) {
     for(; bb; bb = pop_lsb(bb)) 
         ms_push(ms, mv_encode(mt, from, tzcnt(bb)));
 }
 
-void genmoves_push_promo(struct mstack* ms, const u32 from, const u32 to) {
+void genmvs_push_promo(struct mstack* ms, const u32 from, const u32 to) {
     for(u32 pt = NIGHT; pt < KING; ++pt)
         ms_push(ms, mv_encode_p(PAWN, pt, from, to));
 }
 
-void genmoves_push_pawnbb(struct mstack* ms, bitboard to, const u32 diff, const bool promo) {
+void genmvs_push_pawnbb(struct mstack* ms, bitboard to, const u32 diff, const bool promo) {
     for(; to; to = pop_lsb(to)) {
         u32 to_idx = tzcnt(to);
 
-        if(promo) genmoves_push_promo(ms, to_idx + diff, to_idx);
+        if(promo) genmvs_push_promo(ms, to_idx + diff, to_idx);
         else      ms_push(ms, mv_encode(PAWN, to_idx + diff, to_idx)); 
     } 
 }
 
-void genmoves(struct mstack* ms, const struct position* p) {
+void genmvs(struct mstack* ms, const struct position* p) {
     const bool turn         = p->turn;
     const bool w            = turn == WHITE;
 
-    const bitboard all      = p->color[WHITE] | p->color[BLACK];
+    const bitboard all      = ALL_BB(p);
     const bitboard empty    = ~all;
-    const bitboard us       = p->color[turn];
-    const bitboard opps     = p->color[!turn];
+    const bitboard us       = COLOR_BB(p, turn);
+    const bitboard opps     = COLOR_BB(p, !turn);
     const u32      ksqr     = p->ksqr[turn];
 
     const bitboard checker  = gencheckers(p); 
@@ -560,14 +563,14 @@ void genmoves(struct mstack* ms, const struct position* p) {
     const bitboard dpush    = w ? RANK_2 : RANK_7;
     const bitboard promo    = w ? RANK_8 : RANK_1;
 
-    const u32 up  = w ? N: S;
-    const u32 upr = w ? NE : SW;
-    const u32 upl = w ? NW : SE;
+    const u32 up            = w ? N  : S;
+    const u32 upr           = w ? NE : SW;
+    const u32 upl           = w ? NW : SE;
 
-    const u32 up_d  = w ? -8 : 8;
-    const u32 upr_d = w ? -9 : 9;
-    const u32 upl_d = w ? -7 : 7;
-    const u32 up2_d = w ? -16 : 16;
+    const u32 up_d          = w ? -8  : 8;
+    const u32 upr_d         = w ? -9  : 9;
+    const u32 upl_d         = w ? -7  : 7;
+    const u32 up2_d         = w ? -16 : 16;
 
     bitboard pc, atts, target, which = us & ~pinned;
 
@@ -580,52 +583,56 @@ void genmoves(struct mstack* ms, const struct position* p) {
     } else {
         target = ~us;
 
-        pc = p->type[PAWN] & pinned;
+        pc = TYPE_BB(p, PAWN) & pinned;
 
         if(atts = shift(pc, up) & empty & pin) {
             atts &= THROUGH_BB(ksqr, tzcnt(atts) + up_d);
 
-            genmoves_push_pawnbb(ms, atts & ~promo, up_d, false);
-            genmoves_push_pawnbb(ms, atts &  promo, up_d, true);
+            genmvs_push_pawnbb(ms, atts & ~promo, up_d, false);
+            genmvs_push_pawnbb(ms, atts &  promo, up_d, true);
         }
 
         if(atts = shift(pc, upr) & opps & pin) {
             atts &= THROUGH_BB(ksqr, tzcnt(atts) + upr_d);
 
-            genmoves_push_pawnbb(ms, atts & ~promo, upr_d, false);
-            genmoves_push_pawnbb(ms, atts &  promo, upr_d, true);
+            genmvs_push_pawnbb(ms, atts & ~promo, upr_d, false);
+            genmvs_push_pawnbb(ms, atts &  promo, upr_d, true);
         }
 
         if(atts = shift(pc, upl) & opps & pin) {
             atts &= THROUGH_BB(ksqr, tzcnt(atts) + upl_d);
 
-            genmoves_push_pawnbb(ms, atts & ~promo, upl_d, false);
-            genmoves_push_pawnbb(ms, atts &  promo, upl_d, true);
+            genmvs_push_pawnbb(ms, atts & ~promo, upl_d, false);
+            genmvs_push_pawnbb(ms, atts &  promo, upl_d, true);
         }
 
         if(atts = shift(shift(pc & dpush, up) & empty, up) & empty & pin) {
             atts &= THROUGH_BB(ksqr, tzcnt(atts) + (w ? -16 : 16));
 
-            genmoves_push_pawnbb(ms, atts, up2_d, false);
+            genmvs_push_pawnbb(ms, atts, up2_d, false);
         }
 
-        for(pc = p->type[BISHP] & pinned; pc; pc = pop_lsb(pc)) {
+
+
+        for(pc = TYPE_BB(p, BISHP) & pinned; pc; pc = pop_lsb(pc)) {
             u32 from = tzcnt(pc);
 
-            genmoves_push_mvbb(ms, p, BISHP, from, BATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
+            genmvs_push_mvbb(ms, p, BISHP, from, BATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
         }
 
-        for(pc = p->type[ROOK] & pinned; pc; pc = pop_lsb(pc)) {
+        for(pc = TYPE_BB(p, ROOK) & pinned; pc; pc = pop_lsb(pc)) {
             u32 from = tzcnt(pc);
 
-            genmoves_push_mvbb(ms, p, ROOK, from, RATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
+            genmvs_push_mvbb(ms, p, ROOK, from, RATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
         }
 
-        for(pc = p->type[QUEEN] & pinned; pc; pc = pop_lsb(pc)) {
+        for(pc = TYPE_BB(p, QUEEN) & pinned; pc; pc = pop_lsb(pc)) {
             u32 from = tzcnt(pc);
 
-            genmoves_push_mvbb(ms, p, QUEEN, from, QATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
+            genmvs_push_mvbb(ms, p, QUEEN, from, QATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
         }
+
+
 
         if(
                 (p->castle & (w ? F_OOW : F_OOB))         && 
@@ -642,89 +649,93 @@ void genmoves(struct mstack* ms, const struct position* p) {
             ms_push(ms, mv_encode(KING, ksqr, ksqr - 2));
     }
 
-    if(p->ep_target && (!checker || (PATTS_BB(ksqr, turn) & POS_PCBB(p, PAWN, !turn)))) {
+    if(p->ep_target && (!checker || (PATTS_BB(ksqr, turn) & PC_BB(p, PAWN, !turn)))) {
         const u32 ep = p->ep_target;
 
-        for(pc = PATTS_BB(p->ep_target, !turn) & POS_PCBB(p, PAWN, turn); pc; pc = pop_lsb(pc)) {
+        for(pc = PATTS_BB(p->ep_target, !turn) & PC_BB(p, PAWN, turn); pc; pc = pop_lsb(pc)) {
             const u32 from          = tzcnt(pc);
 
-            const bitboard all_nop  = POS_ALLBB(p) ^ (sqr_bb(from) | sqr_bb(ep) | sqr_bb(ep + (w ? -8 : 8)));
+            const bitboard all_nop  = ALL_BB(p) ^ (sqr_bb(from) | sqr_bb(ep) | sqr_bb(ep + up_d));
 
             const bitboard xray_b   = BATTS_BB(ksqr, all_nop);
             const bitboard xray_r   = RATTS_BB(ksqr, all_nop);
 
-            const bitboard opps_b   = POS_SLIDERSBB(p, BISHP, !turn);
-            const bitboard opps_r   = POS_SLIDERSBB(p, ROOK,  !turn);
+            const bitboard opps_b   = SLIDERS_BB(p, BISHP, !turn);
+            const bitboard opps_r   = SLIDERS_BB(p, ROOK,  !turn);
 
             if(!(xray_b & opps_b) && !(xray_r & opps_r))
                 ms_push(ms, mv_encode(PAWN, from, ep));
         }
     }
 
-    pc = p->type[PAWN] & which;
+    pc = TYPE_BB(p, PAWN) & which;
 
     atts = shift(pc, up) & empty & target; 
-    genmoves_push_pawnbb(ms, atts & ~promo, up_d, false);
-    genmoves_push_pawnbb(ms, atts &  promo, up_d, true);
+    genmvs_push_pawnbb(ms, atts & ~promo, up_d, false);
+    genmvs_push_pawnbb(ms, atts &  promo, up_d, true);
 
     atts = shift(pc, upr) & opps & target; 
-    genmoves_push_pawnbb(ms, atts & ~promo, upr_d, false);
-    genmoves_push_pawnbb(ms, atts &  promo, upr_d, true);
+    genmvs_push_pawnbb(ms, atts & ~promo, upr_d, false);
+    genmvs_push_pawnbb(ms, atts &  promo, upr_d, true);
 
     atts = shift(pc, upl) & opps & target; 
-    genmoves_push_pawnbb(ms, atts & ~promo, upl_d, false);
-    genmoves_push_pawnbb(ms, atts &  promo, upl_d, true);
+    genmvs_push_pawnbb(ms, atts & ~promo, upl_d, false);
+    genmvs_push_pawnbb(ms, atts &  promo, upl_d, true);
 
     atts = shift(shift(pc & dpush, up) & empty, up) & empty & target;
-    genmoves_push_pawnbb(ms, atts, w ? -16 : 16, false);
+    genmvs_push_pawnbb(ms, atts, w ? -16 : 16, false);
 
-    for(pc = p->type[NIGHT] & which; pc; pc = pop_lsb(pc)) {
+
+
+    for(pc = TYPE_BB(p, NIGHT) & which; pc; pc = pop_lsb(pc)) {
         u32 from = tzcnt(pc);
 
-        genmoves_push_mvbb(ms, p, NIGHT, from, NATTS_BB(from) & target);
+        genmvs_push_mvbb(ms, p, NIGHT, from, NATTS_BB(from) & target);
     }
 
-    for(pc = p->type[BISHP] & which; pc; pc = pop_lsb(pc)) {
+    for(pc = TYPE_BB(p, BISHP) & which; pc; pc = pop_lsb(pc)) {
         u32 from = tzcnt(pc);
 
-        genmoves_push_mvbb(ms, p, BISHP, from, BATTS_BB(from, all) & target);
+        genmvs_push_mvbb(ms, p, BISHP, from, BATTS_BB(from, all) & target);
     }
 
-    for(pc = p->type[ROOK] & which; pc; pc = pop_lsb(pc)) {
+    for(pc = TYPE_BB(p, ROOK) & which; pc; pc = pop_lsb(pc)) {
         u32 from = tzcnt(pc);
 
-        genmoves_push_mvbb(ms, p, ROOK, from, RATTS_BB(from, all) & target);
+        genmvs_push_mvbb(ms, p, ROOK, from, RATTS_BB(from, all) & target);
     }
 
-    for(pc = p->type[QUEEN] & which; pc; pc = pop_lsb(pc)) {
+    for(pc = TYPE_BB(p, QUEEN) & which; pc; pc = pop_lsb(pc)) {
         u32 from = tzcnt(pc);
 
-        genmoves_push_mvbb(ms, p, QUEEN, from, QATTS_BB(from, all) & target);
+        genmvs_push_mvbb(ms, p, QUEEN, from, QATTS_BB(from, all) & target);
     }
 
-    const bitboard all_nok = POS_ALLBB(p) ^ sqr_bb(ksqr);
+
+
+    const bitboard all_nok = ALL_BB(p) ^ sqr_bb(ksqr);
 
     for(pc = KATTS_BB(ksqr) & ~us; pc; pc = pop_lsb(pc)) {
         u32 to = tzcnt(pc);
 
         if(
-                !(KATTS_BB(to)          & sqr_bb       (p->ksqr[!turn]))  &&
-                !(PATTS_BB(to, turn)    & POS_PCBB     (p, PAWN,  !turn)) &&
-                !(NATTS_BB(to)          & POS_PCBB     (p, NIGHT, !turn)) &&
-                !(BATTS_BB(to, all_nok) & POS_SLIDERSBB(p, BISHP, !turn)) &&
-                !(RATTS_BB(to, all_nok) & POS_SLIDERSBB(p, ROOK,  !turn)))
+                !(KATTS_BB(to)          & sqr_bb    (p->ksqr[!turn]))  &&
+                !(PATTS_BB(to, turn)    & PC_BB     (p, PAWN,  !turn)) &&
+                !(NATTS_BB(to)          & PC_BB     (p, NIGHT, !turn)) &&
+                !(BATTS_BB(to, all_nok) & SLIDERS_BB(p, BISHP, !turn)) &&
+                !(RATTS_BB(to, all_nok) & SLIDERS_BB(p, ROOK,  !turn)))
             ms_push(ms, mv_encode(KING, ksqr, to));
     }
 }
 
-u64 cntmoves(const struct position* p) {
+u64 mvcnt(const struct position* p) {
     const bool turn         = p->turn;
     const bool w            = turn == WHITE;
 
-    const bitboard all      = p->color[WHITE] | p->color[BLACK];
+    const bitboard all      = ALL_BB(p);
     const bitboard empty    = ~all;
-    const bitboard us       = p->color[turn];
-    const bitboard opps     = p->color[!turn];
+    const bitboard us       = COLOR_BB(p, turn);
+    const bitboard opps     = COLOR_BB(p, !turn);
     const u32      ksqr     = p->ksqr[turn];
 
     const bitboard checker  = gencheckers(p); 
@@ -734,14 +745,14 @@ u64 cntmoves(const struct position* p) {
     const bitboard dpush    = w ? RANK_2 : RANK_7;
     const bitboard promo    = w ? RANK_8 : RANK_1;
 
-    const u32 up  = w ? N: S;
-    const u32 upr = w ? NE : SW;
-    const u32 upl = w ? NW : SE;
+    const u32 up            = w ? N  : S;
+    const u32 upr           = w ? NE : SW;
+    const u32 upl           = w ? NW : SE;
 
-    const u32 up_d  = w ?  -8 :  8;
-    const u32 upr_d = w ?  -9 :  9;
-    const u32 upl_d = w ?  -7 :  7;
-    const u32 up2_d = w ? -16 : 16;
+    const u32 up_d          = w ? -8  : 8;
+    const u32 upr_d         = w ? -9  : 9;
+    const u32 upl_d         = w ? -7  : 7;
+    const u32 up2_d         = w ? -16 : 16;
 
     bitboard pc, atts, target, which = us & ~pinned;
 
@@ -756,7 +767,7 @@ u64 cntmoves(const struct position* p) {
     } else {
         target = ~us;
 
-        pc = p->type[PAWN] & pinned;
+        pc = TYPE_BB(p, PAWN) & pinned;
 
         if(atts = shift(pc, up) & empty & pin) {
             atts &= THROUGH_BB(ksqr, tzcnt(atts) + up_d);
@@ -785,23 +796,27 @@ u64 cntmoves(const struct position* p) {
             count += !!atts;
         }
 
-        for(pc = p->type[BISHP] & pinned; pc; pc = pop_lsb(pc)) {
+
+
+        for(pc = TYPE_BB(p, BISHP) & pinned; pc; pc = pop_lsb(pc)) {
             u32 from = tzcnt(pc);
 
             count += popcnt(BATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
         }
 
-        for(pc = p->type[ROOK] & pinned; pc; pc = pop_lsb(pc)) {
+        for(pc = TYPE_BB(p, ROOK) & pinned; pc; pc = pop_lsb(pc)) {
             u32 from = tzcnt(pc);
 
             count += popcnt(RATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
         }
 
-        for(pc = p->type[QUEEN] & pinned; pc; pc = pop_lsb(pc)) {
+        for(pc = TYPE_BB(p, QUEEN) & pinned; pc; pc = pop_lsb(pc)) {
             u32 from = tzcnt(pc);
 
             count += popcnt(QATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
         }
+
+
 
         if(
                 (p->castle & (w ? F_OOW : F_OOB))         && 
@@ -818,26 +833,26 @@ u64 cntmoves(const struct position* p) {
             ++count;
     }
 
-    if(p->ep_target && (!checker || (PATTS_BB(ksqr, turn) & POS_PCBB(p, PAWN, !turn)))) {
+    if(p->ep_target && (!checker || (PATTS_BB(ksqr, turn) & PC_BB(p, PAWN, !turn)))) {
         const u32 ep = p->ep_target;
 
-        for(pc = PATTS_BB(p->ep_target, !turn) & POS_PCBB(p, PAWN, turn); pc; pc = pop_lsb(pc)) {
+        for(pc = PATTS_BB(p->ep_target, !turn) & PC_BB(p, PAWN, turn); pc; pc = pop_lsb(pc)) {
             const u32 from = tzcnt(pc);
 
-            const bitboard all_nop = POS_ALLBB(p) ^ (sqr_bb(from) | sqr_bb(ep) | sqr_bb(ep + up_d));
+            const bitboard all_nop = ALL_BB(p) ^ (sqr_bb(from) | sqr_bb(ep) | sqr_bb(ep + up_d));
 
             const bitboard xray_b  = BATTS_BB(ksqr, all_nop);
             const bitboard xray_r  = RATTS_BB(ksqr, all_nop);
 
-            const bitboard opps_b  = POS_SLIDERSBB(p, BISHP, !turn);
-            const bitboard opps_r  = POS_SLIDERSBB(p, ROOK,  !turn);
+            const bitboard opps_b  = SLIDERS_BB(p, BISHP, !turn);
+            const bitboard opps_r  = SLIDERS_BB(p, ROOK,  !turn);
 
             if(!(xray_b & opps_b) && !(xray_r & opps_r))
                 ++count;
         }
     }
 
-    pc = p->type[PAWN] & which;
+    pc = TYPE_BB(p, PAWN) & which;
 
     atts = shift(pc, up) & empty & target; 
     count += popcnt(atts &  promo) * 4;
@@ -854,29 +869,33 @@ u64 cntmoves(const struct position* p) {
     atts = shift(shift(pc & dpush, up) & empty, up) & empty & target;
     count += popcnt(atts);
 
-    for(pc = p->type[NIGHT] & which; pc; pc = pop_lsb(pc)) 
+
+
+    for(pc = TYPE_BB(p, NIGHT) & which; pc; pc = pop_lsb(pc)) 
         count += popcnt(NATTS_BB(tzcnt(pc)) & target);
 
-    for(pc = p->type[BISHP] & which; pc; pc = pop_lsb(pc)) 
+    for(pc = TYPE_BB(p, BISHP) & which; pc; pc = pop_lsb(pc)) 
         count += popcnt(BATTS_BB(tzcnt(pc), all) & target);
 
-    for(pc = p->type[ROOK] & which; pc; pc = pop_lsb(pc)) 
+    for(pc = TYPE_BB(p, ROOK) & which; pc; pc = pop_lsb(pc)) 
         count += popcnt(RATTS_BB(tzcnt(pc), all) & target);
 
-    for(pc = p->type[QUEEN] & which; pc; pc = pop_lsb(pc))
+    for(pc = TYPE_BB(p, QUEEN) & which; pc; pc = pop_lsb(pc))
         count += popcnt(QATTS_BB(tzcnt(pc), all) & target);
 
-    const bitboard all_nok = POS_ALLBB(p) ^ sqr_bb(ksqr);
+    
+
+    const bitboard all_nok = ALL_BB(p) ^ sqr_bb(ksqr);
 
     for(pc = KATTS_BB(ksqr) & ~us; pc; pc = pop_lsb(pc)) {
         u32 to = tzcnt(pc);
 
         if(
-                !(KATTS_BB(to)          & sqr_bb       (p->ksqr[!turn]))  &&
-                !(PATTS_BB(to, turn)    & POS_PCBB     (p, PAWN,  !turn)) &&
-                !(NATTS_BB(to)          & POS_PCBB     (p, NIGHT, !turn)) &&
-                !(BATTS_BB(to, all_nok) & POS_SLIDERSBB(p, BISHP, !turn)) &&
-                !(RATTS_BB(to, all_nok) & POS_SLIDERSBB(p, ROOK,  !turn)))
+                !(KATTS_BB(to)          & sqr_bb    (p->ksqr[!turn]))  &&
+                !(PATTS_BB(to, turn)    & PC_BB     (p, PAWN,  !turn)) &&
+                !(NATTS_BB(to)          & PC_BB     (p, NIGHT, !turn)) &&
+                !(BATTS_BB(to, all_nok) & SLIDERS_BB(p, BISHP, !turn)) &&
+                !(RATTS_BB(to, all_nok) & SLIDERS_BB(p, ROOK,  !turn)))
             ++count;
     }
 
@@ -893,10 +912,10 @@ u64 cntmoves(const struct position* p) {
 
 u64 _perft(const struct position* p, const u32 depth, const bool print) {
     if(depth < 2)
-        return depth ? cntmoves(p) : 1;
+        return depth ? mvcnt(p) : 1;
 
     struct mstack ms = ms_new();
-    genmoves(&ms, p);
+    genmvs(&ms, p);
 
     u64 c = 0;
 
@@ -944,7 +963,7 @@ void perft(const u32 depth, const bool print, const char* fen) {
 
 int main(int argc, char** argv) {
 
-    perft(9, true, NULL);
+    perft(6, true, NULL);
     
 
     return 0;
