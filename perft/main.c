@@ -115,7 +115,7 @@ enum square {
     A8, B8, C8, D8, E8, F8, G8, H8,
 };
 
-enum color { COLOR_W, COLOR_B };
+enum color { WHITE, BLACK };
 
 enum piece_type {
     PAWN,
@@ -296,7 +296,7 @@ struct position {
 #define POS_PCBB(p, pt, c) (POS_TYPEBB(p, pt) & POS_COLORBB(p, c))
 #define POS_SLIDERSBB(p, pt, c) ((POS_TYPEBB(p, pt) | POS_TYPEBB(p, QUEEN)) & POS_COLORBB(p, c))
 
-#define POS_ALLBB(p) (POS_COLORBB(p, COLOR_W) | POS_COLORBB(p, COLOR_B))
+#define POS_ALLBB(p) (POS_COLORBB(p, WHITE) | POS_COLORBB(p, BLACK))
 
 void pos_fen(struct position* p, const char* fen) {
     const char startpos[] = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -348,7 +348,7 @@ void pos_fen(struct position* p, const char* fen) {
 
     for(; *fen == ' '; ++fen);
 
-    p->turn = *fen == 'w' ? COLOR_W : COLOR_B;
+    p->turn = *fen == 'w' ? WHITE : BLACK;
     for(; *(++fen) == ' ';);
 
     for(; *fen != ' '; ++fen) {
@@ -384,7 +384,7 @@ void pos_print(const struct position* p) {
 
             char c = (char[]){'p', 'n', 'b', 'r', 'q', 'k', '.'}[pt];
         
-            printf("%c ", (sqr_bb(s) & p->color[COLOR_W]) ? toupper(c) : c);
+            printf("%c ", (sqr_bb(s) & p->color[WHITE]) ? toupper(c) : c);
         }
 
         printf("\n");
@@ -392,7 +392,7 @@ void pos_print(const struct position* p) {
 
     printf("\n     a b c d e f g h\n\n");
 
-    printf("turn:   %c\n", p->turn == COLOR_W ? 'w' : 'b');
+    printf("turn:   %c\n", p->turn == WHITE ? 'w' : 'b');
 
     if(p->ep_target)
         printf("ep:     %c%c\n", 'a' + (p->ep_target % 8), '1' + (p->ep_target / 8));
@@ -457,7 +457,7 @@ void makemv(struct position* p, const struct move m) {
     const bitboard mv_bb    = from_bb | to_bb;
 
     const bool turn         = p->turn;
-    const bool w            = turn == COLOR_W;
+    const bool w            = turn == WHITE;
 
     const bitboard opps     = POS_COLORBB(p, !turn);
     const u32 ep            = p->ep_target;
@@ -545,9 +545,9 @@ void genmoves_push_pawnbb(struct mstack* ms, bitboard to, const u32 diff, const 
 
 void genmoves(struct mstack* ms, const struct position* p) {
     const bool turn         = p->turn;
-    const bool w            = turn == COLOR_W;
+    const bool w            = turn == WHITE;
 
-    const bitboard all      = p->color[COLOR_W] | p->color[COLOR_B];
+    const bitboard all      = p->color[WHITE] | p->color[BLACK];
     const bitboard empty    = ~all;
     const bitboard us       = p->color[turn];
     const bitboard opps     = p->color[!turn];
@@ -719,9 +719,9 @@ void genmoves(struct mstack* ms, const struct position* p) {
 
 u64 cntmoves(const struct position* p) {
     const bool turn         = p->turn;
-    const bool w            = turn == COLOR_W;
+    const bool w            = turn == WHITE;
 
-    const bitboard all      = p->color[COLOR_W] | p->color[COLOR_B];
+    const bitboard all      = p->color[WHITE] | p->color[BLACK];
     const bitboard empty    = ~all;
     const bitboard us       = p->color[turn];
     const bitboard opps     = p->color[!turn];
@@ -944,7 +944,7 @@ void perft(const u32 depth, const bool print, const char* fen) {
 
 int main(int argc, char** argv) {
 
-    perft(6, true, NULL);
+    perft(9, true, NULL);
     
 
     return 0;
