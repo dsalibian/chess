@@ -36,6 +36,10 @@ u32 lzcnt(const u64 x) {
     return __builtin_clzll(x);
 }
 
+u64 iso_lsb(const u64 x) {
+    return x & -x;
+}
+
 u64 pop_lsb(const u64 x) {
     return x & (x - 1);
 }
@@ -134,10 +138,10 @@ bitboard shift(bitboard bb, const u32 dir) {
         case N:  return bb << 8;
         case S:  return bb >> 8;
         case E:  return (bb << 1) & ~FILE_A;
-        case NE: return (bb << 9) & ~FILE_A;
-        case SE: return (bb >> 7) & ~FILE_A;
         case W:  return (bb >> 1) & ~FILE_H;
+        case NE: return (bb << 9) & ~FILE_A;
         case NW: return (bb << 7) & ~FILE_H;
+        case SE: return (bb >> 7) & ~FILE_A;
         case SW: return (bb >> 9) & ~FILE_H;
     }
 
@@ -549,7 +553,8 @@ void genmvs(struct mstack* ms, const struct position* p) {
     const bitboard pinned   = us & pin;
 
     const bitboard dpush    = w ? RANK_2 : RANK_7;
-    const bitboard promo    = w ? RANK_8 : RANK_1;
+    const bitboard promo    = w ? RANK_7 : RANK_2;
+    const bitboard final    = w ? RANK_8 : RANK_1;
 
     const u32 up            = w ? N  : S;
     const u32 upr           = w ? NE : SW;
@@ -571,33 +576,25 @@ void genmvs(struct mstack* ms, const struct position* p) {
     } else {
         target = ~us;
 
-        pc = TYPE_BB(p, PAWN) & pinned;
+        for(pc = TYPE_BB(p, PAWN) & pinned; pc; pc = pop_lsb(pc)) {
+            bitboard from_bb = iso_lsb(pc);
+            u32 from = tzcnt(pc);
 
-        if(atts = shift(pc, up) & empty & pin) {
-            atts &= THROUGH_BB(ksqr, tzcnt(atts) + up_d);
+            bitboard thru = THROUGH_BB(ksqr, from);
+            bitboard push = shift(from_bb, up) & empty;
 
-            genmvs_push_pawnbb(ms, atts & ~promo, up_d, false);
-            genmvs_push_pawnbb(ms, atts &  promo, up_d, true);
-        }
+            if(atts = ((PATTS_BB(from, turn) & opps) | push) & thru) {
+                u32 to = tzcnt(atts);
 
-        if(atts = shift(pc, upr) & opps & pin) {
-            atts &= THROUGH_BB(ksqr, tzcnt(atts) + upr_d);
+                if(from_bb & promo)
+                    genmvs_push_promo(ms, from, to);
+                else {
+                    ms_push(ms, mv_encode(PAWN, from, to));
 
-            genmvs_push_pawnbb(ms, atts & ~promo, upr_d, false);
-            genmvs_push_pawnbb(ms, atts &  promo, upr_d, true);
-        }
-
-        if(atts = shift(pc, upl) & opps & pin) {
-            atts &= THROUGH_BB(ksqr, tzcnt(atts) + upl_d);
-
-            genmvs_push_pawnbb(ms, atts & ~promo, upl_d, false);
-            genmvs_push_pawnbb(ms, atts &  promo, upl_d, true);
-        }
-
-        if(atts = shift(shift(pc & dpush, up) & empty, up) & empty & pin) {
-            atts &= THROUGH_BB(ksqr, tzcnt(atts) + (w ? -16 : 16));
-
-            genmvs_push_pawnbb(ms, atts, up2_d, false);
+                    if((from_bb & dpush) && (atts = shift(push, up) & empty & thru))
+                        ms_push(ms, mv_encode(PAWN, from, to - up_d));
+                }
+            }
         }
 
 
@@ -659,19 +656,19 @@ void genmvs(struct mstack* ms, const struct position* p) {
     pc = TYPE_BB(p, PAWN) & which;
 
     atts = shift(pc, up) & empty & target; 
-    genmvs_push_pawnbb(ms, atts & ~promo, up_d, false);
-    genmvs_push_pawnbb(ms, atts &  promo, up_d, true);
+    genmvs_push_pawnbb(ms, atts & ~final, up_d, false);
+    genmvs_push_pawnbb(ms, atts &  final, up_d, true);
 
     atts = shift(pc, upr) & opps & target; 
-    genmvs_push_pawnbb(ms, atts & ~promo, upr_d, false);
-    genmvs_push_pawnbb(ms, atts &  promo, upr_d, true);
+    genmvs_push_pawnbb(ms, atts & ~final, upr_d, false);
+    genmvs_push_pawnbb(ms, atts &  final, upr_d, true);
 
     atts = shift(pc, upl) & opps & target; 
-    genmvs_push_pawnbb(ms, atts & ~promo, upl_d, false);
-    genmvs_push_pawnbb(ms, atts &  promo, upl_d, true);
+    genmvs_push_pawnbb(ms, atts & ~final, upl_d, false);
+    genmvs_push_pawnbb(ms, atts &  final, upl_d, true);
 
     atts = shift(shift(pc & dpush, up) & empty, up) & empty & target;
-    genmvs_push_pawnbb(ms, atts, w ? -16 : 16, false);
+    genmvs_push_pawnbb(ms, atts, up2_d, false);
 
 
 
@@ -731,16 +728,13 @@ u64 mvcnt(const struct position* p) {
     const bitboard pinned   = us & pin;
 
     const bitboard dpush    = w ? RANK_2 : RANK_7;
-    const bitboard promo    = w ? RANK_8 : RANK_1;
+    const bitboard promo    = w ? RANK_7 : RANK_2;
+    const bitboard final    = w ? RANK_8 : RANK_1;
 
     const u32 up            = w ? N  : S;
     const u32 upr           = w ? NE : SW;
     const u32 upl           = w ? NW : SE;
-
-    const u32 up_d          = w ? -8  : 8;
-    const u32 upr_d         = w ? -9  : 9;
-    const u32 upl_d         = w ? -7  : 7;
-    const u32 up2_d         = w ? -16 : 16;
+    const u32 up_d          = w ? -8 : 8;
 
     bitboard pc, atts, target, which = us & ~pinned;
 
@@ -755,33 +749,23 @@ u64 mvcnt(const struct position* p) {
     } else {
         target = ~us;
 
-        pc = TYPE_BB(p, PAWN) & pinned;
+        for(pc = TYPE_BB(p, PAWN) & pinned; pc; pc = pop_lsb(pc)) {
+            bitboard from_bb = iso_lsb(pc);
+            u32 from = tzcnt(pc);
 
-        if(atts = shift(pc, up) & empty & pin) {
-            atts &= THROUGH_BB(ksqr, tzcnt(atts) + up_d);
+            bitboard thru = THROUGH_BB(ksqr, from);
+            bitboard push = shift(from_bb, up) & empty;
 
-            if     (atts &  promo) count += 4;
-            else if(atts & ~promo) ++count;
-        }
+            if(((PATTS_BB(from, turn) & opps) | push) & thru) {
+                if(from_bb & promo)
+                    count += 4;
+                else {
+                    ++count;
 
-        if(atts = shift(pc, upr) & opps & pin) {
-            atts &= THROUGH_BB(ksqr, tzcnt(atts) + upr_d);
-
-            if     (atts &  promo) count += 4;
-            else if(atts & ~promo) ++count;
-        }
-
-        if(atts = shift(pc, upl) & opps & pin) {
-            atts &= THROUGH_BB(ksqr, tzcnt(atts) + upl_d);
-
-            if     (atts &  promo) count += 4;
-            else if(atts & ~promo) ++count;
-        }
-
-        if(atts = shift(shift(pc & dpush, up) & empty, up) & empty & pin) {
-            atts &= THROUGH_BB(ksqr, tzcnt(atts) + up2_d);
-
-            count += !!atts;
+                    if((from_bb & dpush) && (shift(push, up) & empty & thru))
+                        ++count;
+                }
+            }
         }
 
 
@@ -843,16 +827,16 @@ u64 mvcnt(const struct position* p) {
     pc = TYPE_BB(p, PAWN) & which;
 
     atts = shift(pc, up) & empty & target; 
-    count += popcnt(atts &  promo) * 4;
-    count += popcnt(atts & ~promo);
+    count += popcnt(atts &  final) * 4;
+    count += popcnt(atts & ~final);
 
     atts = shift(pc, upr) & opps & target; 
-    count += popcnt(atts &  promo) * 4;
-    count += popcnt(atts & ~promo);
+    count += popcnt(atts &  final) * 4;
+    count += popcnt(atts & ~final);
 
     atts = shift(pc, upl) & opps & target; 
-    count += popcnt(atts &  promo) * 4;
-    count += popcnt(atts & ~promo);
+    count += popcnt(atts &  final) * 4;
+    count += popcnt(atts & ~final);
 
     atts = shift(shift(pc & dpush, up) & empty, up) & empty & target;
     count += popcnt(atts);
@@ -928,7 +912,7 @@ u64 _perft(const struct position* p, const u32 depth, const bool print) {
 void perft(const u32 depth, const bool print, const char* fen) {
     struct position p;
     pos_fen(&p, fen);
-
+    
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     u64 t = (u64)(ts.tv_sec) * 1000000000ull + (u64)(ts.tv_nsec);
@@ -936,7 +920,7 @@ void perft(const u32 depth, const bool print, const char* fen) {
     u64 c = _perft(&p, depth, print);
 
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    t = ((u64)(ts.tv_sec) * 1000000000ull + (u64)(ts.tv_nsec) - t);
+    t = (u64)(ts.tv_sec) * 1000000000ull + (u64)(ts.tv_nsec) - t;
 
     printf("\n%lu (%lu nps)\n", c, (u64)((double)c / t * 1e9));
 }
@@ -950,9 +934,8 @@ void perft(const u32 depth, const bool print, const char* fen) {
 
 
 int main(int argc, char** argv) {
+    perft(8, true, NULL);
 
-    perft(6, true, NULL);
-    
 
     return 0;
 }
