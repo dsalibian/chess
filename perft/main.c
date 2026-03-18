@@ -327,7 +327,9 @@ void pos_fen(struct position* p, const char* fen) {
             case 'r': pt = ROOK;  break;
             case 'q': pt = QUEEN; break;
             case 'k': pt = KING;  break;
-            default: assert(0);
+            default: 
+                      assert(0);
+                      __builtin_unreachable();
         };
 
         bool b = !!islower(c);
@@ -988,12 +990,36 @@ void runtests() {
 
 
 
+
 int main(int argc, char** argv) {
-    runtests();
-    
+    const char* fen = NULL;
 
-   
+    const u32 d = argc > 2 ? atoi(argv[2]) : 6;
 
+    if(argc > 1) {
+        if(!strcmp(argv[1], "buildpgo")) {
+            goperft(6, false, NULL);
+            goperft(6, false, fen_cpw[1]);
+            goperft(6, false, fen_cpw[2]);
+            goperft(6, false, fen_challenge[3]);
+
+            return 0;
+        }
+
+        if(!strcmp(argv[1], "test")) {
+            runtests();
+
+            return 0;
+        }
+
+        if(!strcmp(argv[1], "kiwipete")) 
+            fen = fen_cpw[1];
+
+        else if(strcmp(argv[1], "startpos")) 
+            fen = argv[1];
+    }
+
+    goperft(d, true, fen);
     
     return 0;
 }
