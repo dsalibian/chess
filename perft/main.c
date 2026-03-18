@@ -503,6 +503,7 @@ void makemv(struct position* p, const struct move m) {
                 p->color[!turn] ^= cbb;
             }
 
+            // NOTE: maybe theres a faster way to check this
             else if(abs((i32)(to - from)) == 16) 
                 p->ep_target = to + (w ? -8 : 8);
 
@@ -713,6 +714,7 @@ void genmvs(struct mstack* ms, const struct position* p) {
     }
 }
 
+// NOTE: could probably implement this in a header to mimic templates
 u64 mvcnt(const struct position* p) {
     const bool turn         = p->turn;
     const bool w            = turn == WHITE;
@@ -859,6 +861,8 @@ u64 mvcnt(const struct position* p) {
 
     const bitboard all_nok = ALL_BB(p) ^ sqr_bb(ksqr);
 
+    // NOTE: could probably compute the valid moves mask branchless and do a popcnt
+    
     for(pc = KATTS_BB(ksqr) & ~us; pc; pc = pop_lsb(pc)) {
         u32 to = tzcnt(pc);
 
@@ -881,9 +885,10 @@ u64 mvcnt(const struct position* p) {
 
 
 
+// NOTE: could probably write a function to call at depth 3. make & count, removing the last recursive call
 
-u64 _perft(const struct position* p, const u32 depth, const bool print) {
-    if(depth < 2)
+u64 perft(const struct position* p, const u32 depth, const bool print) {
+    if(!depth)
         return depth ? mvcnt(p) : 1;
 
     struct mstack ms = ms_new();
@@ -897,7 +902,7 @@ u64 _perft(const struct position* p, const u32 depth, const bool print) {
         struct position p2 = *p;
         makemv(&p2, m);
 
-        u64 t = _perft(&p2, depth - 1, false);
+        u64 t = perft(&p2, depth - 1, false);
         c += t;
 
         if(print) {
@@ -909,20 +914,23 @@ u64 _perft(const struct position* p, const u32 depth, const bool print) {
     return c;
 }
 
-void perft(const u32 depth, const bool print, const char* fen) {
+u64 goperft(const u32 depth, const bool print, const char* fen) {
     struct position p;
     pos_fen(&p, fen);
-    
+
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     u64 t = (u64)(ts.tv_sec) * 1000000000ull + (u64)(ts.tv_nsec);
 
-    u64 c = _perft(&p, depth, print);
+    u64 c = perft(&p, depth, print);
 
     clock_gettime(CLOCK_MONOTONIC, &ts);
     t = (u64)(ts.tv_sec) * 1000000000ull + (u64)(ts.tv_nsec) - t;
 
-    printf("\n%lu (%lu nps)\n", c, (u64)((double)c / t * 1e9));
+    if(print)
+        printf("\n%lu (%lu nps)\n", c, (u64)((double)c / t * 1e9));
+
+    return c;
 }
 
 
@@ -933,9 +941,64 @@ void perft(const u32 depth, const bool print, const char* fen) {
 
 
 
+#include "tests.h"
+
+void runtests() {
+    const u32 total = 7 + 11 + 9 + 8;
+    u32 j = 0;
+
+    for(u32 i = 0; i < 7; ++i, ++j) {
+        if(goperft(6, false, fen_cpw[i]) != result_cpw[i])
+            printf("\nfailed: %s\n", fen_cpw[i]);
+        else
+            printf("\r%u / %u", j, total);
+
+        fflush(stdout);
+    } 
+
+    
+    for(u32 i = 0; i < 11; ++i, ++j) {
+        if(goperft(6, false, fen_ccc[i]) != result_ccc[i])
+            printf("\nfailed: %s\n", fen_ccc[i]);
+        else
+            printf("\r%u / %u", j, total);
+
+        fflush(stdout);
+    } 
+
+
+    for(u32 i = 0; i < 9; ++i, ++j) {
+        if(goperft(7, false, fen_challenge[i]) != result_challenge[i])
+            printf("\nfailed: %s\n", fen_challenge[i]);
+        else
+            printf("\r%u / %u", j, total);
+
+        fflush(stdout);
+    } 
+
+    for(u32 i = 0; i < 8; ++i, ++j) {
+        if(goperft(6, false, fen_extra[i]) != result_extra[i])
+            printf("\nfailed: %s\n", fen_extra[i]);
+        else
+            printf("\r%u / %u", j, total);
+
+        fflush(stdout);
+    } 
+}
+
+
+
+
+
+
+
+
 int main(int argc, char** argv) {
-    perft(8, true, NULL);
+    runtests();
+    
 
+   
 
+    
     return 0;
 }
