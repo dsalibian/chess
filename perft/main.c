@@ -503,7 +503,6 @@ void makemv(struct position* p, const struct move m) {
                 p->color[!turn] ^= cbb;
             }
 
-            // NOTE: maybe theres a faster way to check this
             else if(abs((i32)(to - from)) == 16) 
                 p->ep_target = to + (w ? -8 : 8);
 
@@ -714,7 +713,6 @@ void genmvs(struct mstack* ms, const struct position* p) {
     }
 }
 
-// NOTE: could probably implement this in a header to mimic templates
 u64 mvcnt(const struct position* p) {
     const bool turn         = p->turn;
     const bool w            = turn == WHITE;
@@ -861,8 +859,6 @@ u64 mvcnt(const struct position* p) {
 
     const bitboard all_nok = ALL_BB(p) ^ sqr_bb(ksqr);
 
-    // NOTE: could probably compute the valid moves mask branchless and do a popcnt
-    
     for(pc = KATTS_BB(ksqr) & ~us; pc; pc = pop_lsb(pc)) {
         u32 to = tzcnt(pc);
 
@@ -885,10 +881,9 @@ u64 mvcnt(const struct position* p) {
 
 
 
-// NOTE: could probably write a function to call at depth 3. make & count, removing the last recursive call
 
 u64 perft(const struct position* p, const u32 depth, const bool print) {
-    if(!depth)
+    if(depth < 2)
         return depth ? mvcnt(p) : 1;
 
     struct mstack ms = ms_new();
