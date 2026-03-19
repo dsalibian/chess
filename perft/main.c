@@ -499,14 +499,14 @@ void makemv(struct position* p, const struct move m) {
             }
 
             else if(to == ep) {
-                const bitboard cbb = shift(to_bb, w ? S: N);
+                const bitboard cbb = shift(to_bb, w ? S : N);
 
                 p->type[PAWN]   ^= cbb;
                 p->color[!turn] ^= cbb;
             }
 
-            else if(abs((i32)(to - from)) == 16) 
-                p->ep_target = to + (w ? -8 : 8);
+            else if(to - from == 16 || to - from == -16)
+                p->ep_target = (to + from) / 2;
 
         default:
             p->type[moved] ^= mv_bb;
@@ -769,7 +769,7 @@ u64 mvcnt(const struct position* p) {
                 }
             }
         }
-
+        
 
 
         for(pc = TYPE_BB(p, BISHP) & pinned; pc; pc = pop_lsb(pc)) {
@@ -793,16 +793,16 @@ u64 mvcnt(const struct position* p) {
 
 
         if(
-                (p->castle & (w ? F_OOW : F_OOB))         && 
-                !(all & (w ? 0x60ull : 0x60ull << 7 * 8)) &&
-                !sqr_attd(p, ksqr + 1, !turn)             &&
+                (p->castle & (w ? F_OOW : F_OOB))           && 
+                !(all & (w ? 0x60ull : 0x60ull << (7 * 8))) &&
+                !sqr_attd(p, ksqr + 1, !turn)               &&
                 !sqr_attd(p, ksqr + 2, !turn)) 
             ++count;
 
         if(
-                (p->castle & (w ? F_OOOW : F_OOOB))     && 
-                !(all & (w ? 0xeull : 0xeull << 7 * 8)) &&
-                !sqr_attd(p, ksqr - 1, !turn)           &&
+                (p->castle & (w ? F_OOOW : F_OOOB))       && 
+                !(all & (w ? 0xeull : 0xeull << (7 * 8))) &&
+                !sqr_attd(p, ksqr - 1, !turn)             &&
                 !sqr_attd(p, ksqr - 2, !turn)) 
             ++count;
     }
@@ -810,7 +810,7 @@ u64 mvcnt(const struct position* p) {
     if(p->ep_target && (!checker || (PATTS_BB(ksqr, turn) & PC_BB(p, PAWN, !turn)))) {
         const u32 ep = p->ep_target;
 
-        for(pc = PATTS_BB(p->ep_target, !turn) & PC_BB(p, PAWN, turn); pc; pc = pop_lsb(pc)) {
+        for(pc = PATTS_BB(ep, !turn) & PC_BB(p, PAWN, turn); pc; pc = pop_lsb(pc)) {
             const u32 from = tzcnt(pc);
 
             const bitboard all_nop = ALL_BB(p) ^ (sqr_bb(from) | sqr_bb(ep) | sqr_bb(ep + up_d));
@@ -828,19 +828,19 @@ u64 mvcnt(const struct position* p) {
 
     pc = TYPE_BB(p, PAWN) & which;
 
-    atts = shift(pc, up) & empty & target; 
+    atts   = shift(pc, up) & empty & target; 
     count += popcnt(atts &  final) * 4;
     count += popcnt(atts & ~final);
 
-    atts = shift(pc, upr) & opps & target; 
+    atts   = shift(pc, upr) & opps & target; 
     count += popcnt(atts &  final) * 4;
     count += popcnt(atts & ~final);
 
-    atts = shift(pc, upl) & opps & target; 
+    atts   = shift(pc, upl) & opps & target; 
     count += popcnt(atts &  final) * 4;
     count += popcnt(atts & ~final);
 
-    atts = shift(shift(pc & dpush, up) & empty, up) & empty & target;
+    atts   = shift(shift(pc & dpush, up) & empty, up) & empty & target;
     count += popcnt(atts);
 
 
@@ -859,7 +859,7 @@ u64 mvcnt(const struct position* p) {
 
     
 
-    const bitboard all_nok = ALL_BB(p) ^ sqr_bb(ksqr);
+    const bitboard all_nok = all ^ sqr_bb(ksqr);
 
     for(pc = KATTS_BB(ksqr) & ~us; pc; pc = pop_lsb(pc)) {
         u32 to = tzcnt(pc);
@@ -940,47 +940,18 @@ u64 goperft(const u32 depth, const bool print, const char* fen) {
 
 #include "tests.h"
 
-void runtests() {
-    const u32 total = 7 + 11 + 9 + 8;
-    u32 j = 0;
+void runtests(const bool deep) {
+    const u32 u = deep ? 26 : 14;
 
-    for(u32 i = 0; i < 7; ++i, ++j) {
-        if(goperft(6, false, fen_cpw[i]) != result_cpw[i])
-            printf("\nfailed: %s\n", fen_cpw[i]);
-        else
-            printf("\r%u / %u", j, total);
-
+    for(u32 i = 0; i < u; ++i) {
+        printf("\r%u / %u", i, u);
         fflush(stdout);
-    } 
 
-    
-    for(u32 i = 0; i < 11; ++i, ++j) {
-        if(goperft(6, false, fen_ccc[i]) != result_ccc[i])
-            printf("\nfailed: %s\n", fen_ccc[i]);
-        else
-            printf("\r%u / %u", j, total);
+        if(goperft(fens[i].depth, false, fens[i].fen) != fens[i].result)
+            printf("\nfailed: %s\n", fens[i].fen);
+    }    
 
-        fflush(stdout);
-    } 
-
-
-    for(u32 i = 0; i < 9; ++i, ++j) {
-        if(goperft(7, false, fen_challenge[i]) != result_challenge[i])
-            printf("\nfailed: %s\n", fen_challenge[i]);
-        else
-            printf("\r%u / %u", j, total);
-
-        fflush(stdout);
-    } 
-
-    for(u32 i = 0; i < 8; ++i, ++j) {
-        if(goperft(6, false, fen_extra[i]) != result_extra[i])
-            printf("\nfailed: %s\n", fen_extra[i]);
-        else
-            printf("\r%u / %u", j, total);
-
-        fflush(stdout);
-    } 
+    printf("\n");
 }
 
 
@@ -998,22 +969,22 @@ int main(int argc, char** argv) {
 
     if(argc > 1) {
         if(!strcmp(argv[1], "buildpgo")) {
-            goperft(6, false, NULL);
-            goperft(6, false, fen_cpw[1]);
-            goperft(6, false, fen_cpw[2]);
-            goperft(6, false, fen_challenge[3]);
+            goperft(6, false, fens[0].fen);
+            goperft(6, false, fens[1].fen);
 
             return 0;
         }
 
         if(!strcmp(argv[1], "test")) {
-            runtests();
+            bool deep = argc > 2 ? !strcmp(argv[2], "deep") : false;
+
+            runtests(deep);
 
             return 0;
         }
 
         if(!strcmp(argv[1], "kiwipete")) 
-            fen = fen_cpw[1];
+            fen = fens[1].fen;
 
         else if(strcmp(argv[1], "startpos")) 
             fen = argv[1];
