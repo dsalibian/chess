@@ -540,9 +540,8 @@ void genmvs_push_pawnbb(struct mstack* ms, bitboard to, const u32 diff, const bo
     } 
 }
 
-void genmvs(struct mstack* ms, const struct position* p) {
-    const bool turn         = p->turn;
-    const bool w            = turn == WHITE;
+u64 _mvs(struct mstack* ms, const struct position* p, const bool turn, const bool gen) {
+    const bool w = turn == WHITE;
 
     const bitboard all      = ALL_BB(p);
     const bitboard empty    = ~all;
@@ -567,6 +566,8 @@ void genmvs(struct mstack* ms, const struct position* p) {
     const u32 upl_d         = w ? -7  : 7;
     const u32 up2_d         = w ? -16 : 16;
 
+    u64 count = 0;
+
     bitboard pc, atts, target, which = us & ~pinned;
 
     if(checker) {
@@ -588,13 +589,18 @@ void genmvs(struct mstack* ms, const struct position* p) {
             if(atts = ((PATTS_BB(from, turn) & opps) | push) & thru) {
                 u32 to = tzcnt(atts);
 
-                if(from_bb & promo)
-                    genmvs_push_promo(ms, from, to);
+                if(from_bb & promo) {
+                    if(gen) genmvs_push_promo(ms, from, to);
+                    else    count += 4;
+                }
                 else {
-                    ms_push(ms, mv_encode(PAWN, from, to));
+                    if(gen) ms_push(ms, mv_encode(PAWN, from, to));
+                    else    ++count;
 
-                    if((from_bb & dpush) && (atts = shift(push, up) & empty & thru))
-                        ms_push(ms, mv_encode(PAWN, from, to - up_d));
+                    if((from_bb & dpush) && (atts = shift(push, up) & empty & thru)) {
+                        if(gen) ms_push(ms, mv_encode(PAWN, from, to - up_d));
+                        else    ++count;
+                    }
                 }
             }
         }
@@ -604,19 +610,22 @@ void genmvs(struct mstack* ms, const struct position* p) {
         for(pc = TYPE_BB(p, BISHP) & pinned; pc; pc = pop_lsb(pc)) {
             u32 from = tzcnt(pc);
 
-            genmvs_push_mvbb(ms, p, BISHP, from, BATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
+            if(gen) genmvs_push_mvbb(ms, p, BISHP, from, BATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
+            else    count += popcnt(BATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from)); 
         }
 
         for(pc = TYPE_BB(p, ROOK) & pinned; pc; pc = pop_lsb(pc)) {
             u32 from = tzcnt(pc);
 
-            genmvs_push_mvbb(ms, p, ROOK, from, RATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
+            if(gen) genmvs_push_mvbb(ms, p, ROOK, from, RATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
+            else    count += popcnt(RATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
         }
 
         for(pc = TYPE_BB(p, QUEEN) & pinned; pc; pc = pop_lsb(pc)) {
             u32 from = tzcnt(pc);
 
-            genmvs_push_mvbb(ms, p, QUEEN, from, QATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
+            if(gen) genmvs_push_mvbb(ms, p, QUEEN, from, QATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
+            else    count += popcnt(QATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
         }
 
 
@@ -626,14 +635,21 @@ void genmvs(struct mstack* ms, const struct position* p) {
                 !(all & (w ? 0x60ull : 0x60ull << 7 * 8)) &&
                 !sqr_attd(p, ksqr + 1, !turn)             &&
                 !sqr_attd(p, ksqr + 2, !turn)) 
-            ms_push(ms, mv_encode(KING, ksqr, ksqr + 2));
+        {
+            if(gen) ms_push(ms, mv_encode(KING, ksqr, ksqr + 2));
+            else    ++count;
+        }
 
         if(
                 (p->castle & (w ? F_OOOW : F_OOOB))     && 
                 !(all & (w ? 0xeull : 0xeull << 7 * 8)) &&
                 !sqr_attd(p, ksqr - 1, !turn)           &&
                 !sqr_attd(p, ksqr - 2, !turn)) 
-            ms_push(ms, mv_encode(KING, ksqr, ksqr - 2));
+        {
+
+            if(gen) ms_push(ms, mv_encode(KING, ksqr, ksqr - 2));
+            else    ++count;
+        }
     }
 
     if(p->ep_target && (!checker || (PATTS_BB(ksqr, turn) & PC_BB(p, PAWN, !turn)))) {
@@ -650,52 +666,74 @@ void genmvs(struct mstack* ms, const struct position* p) {
             const bitboard opps_b   = SLIDERS_BB(p, BISHP, !turn);
             const bitboard opps_r   = SLIDERS_BB(p, ROOK,  !turn);
 
-            if(!(xray_b & opps_b) && !(xray_r & opps_r))
-                ms_push(ms, mv_encode(PAWN, from, ep));
+            if(!(xray_b & opps_b) && !(xray_r & opps_r)) {
+                if(gen) ms_push(ms, mv_encode(PAWN, from, ep));
+                else    ++count;
+            }
         }
     }
 
     pc = TYPE_BB(p, PAWN) & which;
 
     atts = shift(pc, up) & empty & target; 
-    genmvs_push_pawnbb(ms, atts & ~final, up_d, false);
-    genmvs_push_pawnbb(ms, atts &  final, up_d, true);
+    if(gen) {
+        genmvs_push_pawnbb(ms, atts & ~final, up_d, false);
+        genmvs_push_pawnbb(ms, atts &  final, up_d, true);
+    } else {
+        count += popcnt(atts &  final) * 4;
+        count += popcnt(atts & ~final);
+    }
 
     atts = shift(pc, upr) & opps & target; 
-    genmvs_push_pawnbb(ms, atts & ~final, upr_d, false);
-    genmvs_push_pawnbb(ms, atts &  final, upr_d, true);
+    if(gen) {
+        genmvs_push_pawnbb(ms, atts & ~final, upr_d, false);
+        genmvs_push_pawnbb(ms, atts &  final, upr_d, true);
+    } else {
+        count += popcnt(atts &  final) * 4;
+        count += popcnt(atts & ~final);
+    }
 
     atts = shift(pc, upl) & opps & target; 
-    genmvs_push_pawnbb(ms, atts & ~final, upl_d, false);
-    genmvs_push_pawnbb(ms, atts &  final, upl_d, true);
+    if(gen) {
+        genmvs_push_pawnbb(ms, atts & ~final, upl_d, false);
+        genmvs_push_pawnbb(ms, atts &  final, upl_d, true);
+    } else {
+        count += popcnt(atts &  final) * 4;
+        count += popcnt(atts & ~final);
+    }
 
     atts = shift(shift(pc & dpush, up) & empty, up) & empty & target;
-    genmvs_push_pawnbb(ms, atts, up2_d, false);
+    if(gen) genmvs_push_pawnbb(ms, atts, up2_d, false);
+    else    count += popcnt(atts);
 
 
 
     for(pc = TYPE_BB(p, NIGHT) & which; pc; pc = pop_lsb(pc)) {
         u32 from = tzcnt(pc);
 
-        genmvs_push_mvbb(ms, p, NIGHT, from, NATTS_BB(from) & target);
+        if(gen) genmvs_push_mvbb(ms, p, NIGHT, from, NATTS_BB(from) & target);
+        else    count += popcnt(NATTS_BB(tzcnt(pc)) & target);
     }
 
     for(pc = TYPE_BB(p, BISHP) & which; pc; pc = pop_lsb(pc)) {
         u32 from = tzcnt(pc);
 
-        genmvs_push_mvbb(ms, p, BISHP, from, BATTS_BB(from, all) & target);
+        if(gen) genmvs_push_mvbb(ms, p, BISHP, from, BATTS_BB(from, all) & target);
+        else    count += popcnt(BATTS_BB(tzcnt(pc), all) & target);
     }
 
     for(pc = TYPE_BB(p, ROOK) & which; pc; pc = pop_lsb(pc)) {
         u32 from = tzcnt(pc);
 
-        genmvs_push_mvbb(ms, p, ROOK, from, RATTS_BB(from, all) & target);
+        if(gen) genmvs_push_mvbb(ms, p, ROOK, from, RATTS_BB(from, all) & target);
+        else    count += popcnt(RATTS_BB(tzcnt(pc), all) & target);
     }
 
     for(pc = TYPE_BB(p, QUEEN) & which; pc; pc = pop_lsb(pc)) {
         u32 from = tzcnt(pc);
 
-        genmvs_push_mvbb(ms, p, QUEEN, from, QATTS_BB(from, all) & target);
+        if(gen) genmvs_push_mvbb(ms, p, QUEEN, from, QATTS_BB(from, all) & target);
+        else    count += popcnt(QATTS_BB(tzcnt(pc), all) & target);
     }
 
 
@@ -711,170 +749,35 @@ void genmvs(struct mstack* ms, const struct position* p) {
                 !(NATTS_BB(to)          & PC_BB     (p, NIGHT, !turn)) &&
                 !(BATTS_BB(to, all_nok) & SLIDERS_BB(p, BISHP, !turn)) &&
                 !(RATTS_BB(to, all_nok) & SLIDERS_BB(p, ROOK,  !turn)))
-            ms_push(ms, mv_encode(KING, ksqr, to));
-    }
-}
-
-u64 mvcnt(const struct position* p) {
-    const bool turn         = p->turn;
-    const bool w            = turn == WHITE;
-
-    const bitboard all      = ALL_BB(p);
-    const bitboard empty    = ~all;
-    const bitboard us       = COLOR_BB(p, turn);
-    const bitboard opps     = COLOR_BB(p, !turn);
-    const u32      ksqr     = p->ksqr[turn];
-
-    const bitboard checker  = gencheckers(p); 
-    const bitboard pin      = genpins(p);
-    const bitboard pinned   = us & pin;
-
-    const bitboard dpush    = w ? RANK_2 : RANK_7;
-    const bitboard promo    = w ? RANK_7 : RANK_2;
-    const bitboard final    = w ? RANK_8 : RANK_1;
-
-    const u32 up            = w ? N  : S;
-    const u32 upr           = w ? NE : SW;
-    const u32 upl           = w ? NW : SE;
-    const u32 up_d          = w ? -8 : 8;
-
-    bitboard pc, atts, target, which = us & ~pinned;
-
-    u64 count = 0;
-
-    if(checker) {
-        if(pop_lsb(checker)) 
-            which = target = 0;
-        else 
-            target = BETWEEN_BB(ksqr, tzcnt(checker));
-        
-    } else {
-        target = ~us;
-
-        for(pc = TYPE_BB(p, PAWN) & pinned; pc; pc = pop_lsb(pc)) {
-            bitboard from_bb = iso_lsb(pc);
-            u32 from = tzcnt(pc);
-
-            bitboard thru = THROUGH_BB(ksqr, from);
-            bitboard push = shift(from_bb, up) & empty;
-
-            if(((PATTS_BB(from, turn) & opps) | push) & thru) {
-                if(from_bb & promo)
-                    count += 4;
-                else {
-                    ++count;
-
-                    if((from_bb & dpush) && (shift(push, up) & empty & thru))
-                        ++count;
-                }
-            }
+        {
+            if(gen) ms_push(ms, mv_encode(KING, ksqr, to));
+            else    ++count;
         }
-        
-
-
-        for(pc = TYPE_BB(p, BISHP) & pinned; pc; pc = pop_lsb(pc)) {
-            u32 from = tzcnt(pc);
-
-            count += popcnt(BATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
-        }
-
-        for(pc = TYPE_BB(p, ROOK) & pinned; pc; pc = pop_lsb(pc)) {
-            u32 from = tzcnt(pc);
-
-            count += popcnt(RATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
-        }
-
-        for(pc = TYPE_BB(p, QUEEN) & pinned; pc; pc = pop_lsb(pc)) {
-            u32 from = tzcnt(pc);
-
-            count += popcnt(QATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
-        }
-
-
-
-        if(
-                (p->castle & (w ? F_OOW : F_OOB))           && 
-                !(all & (w ? 0x60ull : 0x60ull << (7 * 8))) &&
-                !sqr_attd(p, ksqr + 1, !turn)               &&
-                !sqr_attd(p, ksqr + 2, !turn)) 
-            ++count;
-
-        if(
-                (p->castle & (w ? F_OOOW : F_OOOB))       && 
-                !(all & (w ? 0xeull : 0xeull << (7 * 8))) &&
-                !sqr_attd(p, ksqr - 1, !turn)             &&
-                !sqr_attd(p, ksqr - 2, !turn)) 
-            ++count;
-    }
-
-    if(p->ep_target && (!checker || (PATTS_BB(ksqr, turn) & PC_BB(p, PAWN, !turn)))) {
-        const u32 ep = p->ep_target;
-
-        for(pc = PATTS_BB(ep, !turn) & PC_BB(p, PAWN, turn); pc; pc = pop_lsb(pc)) {
-            const u32 from = tzcnt(pc);
-
-            const bitboard all_nop = ALL_BB(p) ^ (sqr_bb(from) | sqr_bb(ep) | sqr_bb(ep + up_d));
-
-            const bitboard xray_b  = BATTS_BB(ksqr, all_nop);
-            const bitboard xray_r  = RATTS_BB(ksqr, all_nop);
-
-            const bitboard opps_b  = SLIDERS_BB(p, BISHP, !turn);
-            const bitboard opps_r  = SLIDERS_BB(p, ROOK,  !turn);
-
-            if(!(xray_b & opps_b) && !(xray_r & opps_r))
-                ++count;
-        }
-    }
-
-    pc = TYPE_BB(p, PAWN) & which;
-
-    atts   = shift(pc, up) & empty & target; 
-    count += popcnt(atts &  final) * 4;
-    count += popcnt(atts & ~final);
-
-    atts   = shift(pc, upr) & opps & target; 
-    count += popcnt(atts &  final) * 4;
-    count += popcnt(atts & ~final);
-
-    atts   = shift(pc, upl) & opps & target; 
-    count += popcnt(atts &  final) * 4;
-    count += popcnt(atts & ~final);
-
-    atts   = shift(shift(pc & dpush, up) & empty, up) & empty & target;
-    count += popcnt(atts);
-
-
-
-    for(pc = TYPE_BB(p, NIGHT) & which; pc; pc = pop_lsb(pc)) 
-        count += popcnt(NATTS_BB(tzcnt(pc)) & target);
-
-    for(pc = TYPE_BB(p, BISHP) & which; pc; pc = pop_lsb(pc)) 
-        count += popcnt(BATTS_BB(tzcnt(pc), all) & target);
-
-    for(pc = TYPE_BB(p, ROOK) & which; pc; pc = pop_lsb(pc)) 
-        count += popcnt(RATTS_BB(tzcnt(pc), all) & target);
-
-    for(pc = TYPE_BB(p, QUEEN) & which; pc; pc = pop_lsb(pc))
-        count += popcnt(QATTS_BB(tzcnt(pc), all) & target);
-
-    
-
-    const bitboard all_nok = all ^ sqr_bb(ksqr);
-
-    for(pc = KATTS_BB(ksqr) & ~us; pc; pc = pop_lsb(pc)) {
-        u32 to = tzcnt(pc);
-
-        if(
-                !(KATTS_BB(to)          & sqr_bb    (p->ksqr[!turn]))  &&
-                !(PATTS_BB(to, turn)    & PC_BB     (p, PAWN,  !turn)) &&
-                !(NATTS_BB(to)          & PC_BB     (p, NIGHT, !turn)) &&
-                !(BATTS_BB(to, all_nok) & SLIDERS_BB(p, BISHP, !turn)) &&
-                !(RATTS_BB(to, all_nok) & SLIDERS_BB(p, ROOK,  !turn)))
-            ++count;
     }
 
     return count;
 }
+
+__attribute__((flatten))
+void _genmvsw(struct mstack* ms, const struct position* p) {
+    _mvs(ms, p, WHITE, true);
+}
+
+__attribute__((flatten))
+void _genmvsb(struct mstack* ms, const struct position* p) {
+    _mvs(ms, p, BLACK, true);
+}
+
+__attribute__((flatten))
+u64 _cntmvsw(const struct position* p) {
+    return _mvs(NULL, p, WHITE, false);
+}
+
+__attribute__((flatten))
+u64 _cntmvsb(const struct position* p) {
+    return _mvs(NULL, p, BLACK, false);
+}
+
 
 
 
@@ -886,10 +789,11 @@ u64 mvcnt(const struct position* p) {
 
 u64 perft(const struct position* p, const u32 depth, const bool print) {
     if(depth < 2)
-        return depth ? mvcnt(p) : 1;
-
+        return depth ? (p->turn == WHITE ? _cntmvsw : _cntmvsb)(p) : 1;
+    
     struct mstack ms = ms_new();
-    genmvs(&ms, p);
+
+    (p->turn == WHITE ? _genmvsw : _genmvsb)(&ms, p);
 
     u64 c = 0;
 
@@ -898,7 +802,7 @@ u64 perft(const struct position* p, const u32 depth, const bool print) {
 
         struct position p2 = *p;
         makemv(&p2, m);
-
+        
         u64 t = perft(&p2, depth - 1, false);
         c += t;
 

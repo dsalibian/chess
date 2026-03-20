@@ -25,14 +25,15 @@ struct {
     { .fen = "r3k2r/1bp2pP1/5n2/1P1Q4/1pPq4/5N2/1B1P2p1/R1R1K2R b KQkq c3"         , .depth = 6, .result = 9299902790ull  },
     { .fen = "8/K7/8/8/2Q1Pp1k/8/8/8 b - e3"                                       , .depth = 8, .result = 536974869ull   },
 
-    { .fen = "r3k2r/pppp1ppp/1b4nN/nPP5/BB2Pq1b/3P1NP1/P4KPP/R2Q1R2 w kq -"        , .depth = 6, .result = 2163726473ull  },    // from cpw4 at depth 7
+    // from cpw4 at depth 7 
+    { .fen = "r3k2r/pppp1ppp/1b4nN/nPP5/BB2Pq1b/3P1NP1/P4KPP/R2Q1R2 w kq -"        , .depth = 6, .result = 2163726473ull  },
 
     // some ordinary positions
     { .fen = "r1bqk2r/pp3ppp/2nppn2/2p5/2PP4/2PBPN2/P4PPP/R1BQK2R w KQkq -"        , .depth = 6, .result = 2315917533ull  },
     { .fen = "r1bqk1nr/ppp2pbp/2np2p1/4p3/2P5/2NP2P1/PP2PPBP/R1BQK1NR w KQkq -"    , .depth = 6, .result = 2333210325ull  },
     { .fen = "1k6/8/PK6/8/8/8/8/8 b - -"                                           , .depth = 9, .result = 1554162ull     },
 
-    // positions from the perft 7 challenge threads
+    // positions from some perft 7 challenge threads
     { .fen = "rnb1kbnr/pp1pp1pp/1qp2p2/8/Q1P5/N7/PP1PPPPP/1RB1KBNR b Kkq -"        , .depth = 7, .result = 14794751816ull  },   // https://www.talkchess.com/forum/viewtopic.php?t=59781  
     { .fen = "rnbq1b1r/ppppkppp/4pn2/8/1Q6/2PP4/PP2PPPP/RNB1KBNR b KQ -"           , .depth = 7, .result = 3016055832ull   },   // https://www.talkchess.com/forum/viewtopic.php?t=59818 
     { .fen = "rnbq1bnr/ppppk1pp/5p2/4p3/1Q6/2PP4/PP2PPPP/RNB1KBNR b KQ -"          , .depth = 7, .result = 4517445538ull   },   // https://www.talkchess.com/forum/viewtopic.php?t=59915 
