@@ -10,7 +10,7 @@ perf: main
 
 pgo: 
 	$(CC) $(CFLAGS) $(OPTFLAGS) -fwhole-program -fprofile-generate main.c
-	./a.out buildpgo
+	./a.out --pgo
 	$(CC) $(CFLAGS) $(OPTFLAGS) -fwhole-program -fprofile-use main.c
 	rm *.gcda
 
@@ -18,4 +18,4 @@ main: main.c
 	$(CC) $(CFLAGS) main.c
 
 clean:
-	rm a.out *.gcda
+	rm -f a.out *.gcda

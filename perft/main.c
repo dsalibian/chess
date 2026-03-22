@@ -7,6 +7,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
+#include <pthread.h>
 
 typedef uint64_t u64;
 typedef uint32_t u32;
@@ -63,6 +64,12 @@ void print_bb(const bitboard bb) {
     printf("\n     a b c d e f g h\n\n");
 }
 
+u64 time_ns() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+
+    return (u64)ts.tv_sec * 1000000000ull + (u64)ts.tv_nsec;
+}
 
 
 
@@ -295,7 +302,7 @@ struct position {
 #define ALL_BB(p)               (COLOR_BB(p, WHITE) | COLOR_BB(p, BLACK))
 
 void pos_fen(struct position* p, const char* fen) {
-    const char startpos[] = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    const char startpos[] = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -";
     if(!fen)
         fen = startpos;
 
@@ -521,21 +528,21 @@ void makemv(struct position* p, const struct move m) {
 
 
 
-void genmvs_push_mvbb(struct mstack* ms, const struct position* p, const u32 mt, const u32 from, bitboard bb) {
+void _mvs_push_mvbb(struct mstack* ms, const struct position* p, const u32 mt, const u32 from, bitboard bb) {
     for(; bb; bb = pop_lsb(bb)) 
         ms_push(ms, mv_encode(mt, from, tzcnt(bb)));
 }
 
-void genmvs_push_promo(struct mstack* ms, const u32 from, const u32 to) {
+void _mvs_push_promo(struct mstack* ms, const u32 from, const u32 to) {
     for(u32 pt = NIGHT; pt < KING; ++pt)
         ms_push(ms, mv_encode_p(PAWN, pt, from, to));
 }
 
-void genmvs_push_pawnbb(struct mstack* ms, bitboard to, const u32 diff, const bool promo) {
+void _mvs_push_pawnbb(struct mstack* ms, bitboard to, const u32 diff, const bool promo) {
     for(; to; to = pop_lsb(to)) {
         u32 to_idx = tzcnt(to);
 
-        if(promo) genmvs_push_promo(ms, to_idx + diff, to_idx);
+        if(promo) _mvs_push_promo(ms, to_idx + diff, to_idx);
         else      ms_push(ms, mv_encode(PAWN, to_idx + diff, to_idx)); 
     } 
 }
@@ -569,6 +576,7 @@ u64 _mvs(struct mstack* ms, const struct position* p, const bool turn, const boo
     u64 count = 0;
 
     bitboard pc, atts, target, which = us & ~pinned;
+    u32 from;
 
     if(checker) {
         if(pop_lsb(checker)) 
@@ -581,7 +589,7 @@ u64 _mvs(struct mstack* ms, const struct position* p, const bool turn, const boo
 
         for(pc = TYPE_BB(p, PAWN) & pinned; pc; pc = pop_lsb(pc)) {
             bitboard from_bb = iso_lsb(pc);
-            u32 from = tzcnt(pc);
+            from = tzcnt(pc);
 
             bitboard thru = THROUGH_BB(ksqr, from);
             bitboard push = shift(from_bb, up) & empty;
@@ -590,7 +598,7 @@ u64 _mvs(struct mstack* ms, const struct position* p, const bool turn, const boo
                 u32 to = tzcnt(atts);
 
                 if(from_bb & promo) {
-                    if(gen) genmvs_push_promo(ms, from, to);
+                    if(gen) _mvs_push_promo(ms, from, to);
                     else    count += 4;
                 }
                 else {
@@ -608,24 +616,27 @@ u64 _mvs(struct mstack* ms, const struct position* p, const bool turn, const boo
 
 
         for(pc = TYPE_BB(p, BISHP) & pinned; pc; pc = pop_lsb(pc)) {
-            u32 from = tzcnt(pc);
+            from = tzcnt(pc);
+            atts = BATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from);
 
-            if(gen) genmvs_push_mvbb(ms, p, BISHP, from, BATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
-            else    count += popcnt(BATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from)); 
+            if(gen) _mvs_push_mvbb(ms, p, BISHP, from, atts);
+            else    count += popcnt(atts); 
         }
 
         for(pc = TYPE_BB(p, ROOK) & pinned; pc; pc = pop_lsb(pc)) {
-            u32 from = tzcnt(pc);
+            from = tzcnt(pc);
+            atts = RATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from);
 
-            if(gen) genmvs_push_mvbb(ms, p, ROOK, from, RATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
-            else    count += popcnt(RATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
+            if(gen) _mvs_push_mvbb(ms, p, ROOK, from, atts);
+            else    count += popcnt(atts);
         }
 
         for(pc = TYPE_BB(p, QUEEN) & pinned; pc; pc = pop_lsb(pc)) {
-            u32 from = tzcnt(pc);
+            from = tzcnt(pc);
+            atts = QATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from);
 
-            if(gen) genmvs_push_mvbb(ms, p, QUEEN, from, QATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
-            else    count += popcnt(QATTS_BB(from, all) & ~us & THROUGH_BB(ksqr, from));
+            if(gen) _mvs_push_mvbb(ms, p, QUEEN, from, atts);
+            else    count += popcnt(atts);
         }
 
 
@@ -656,7 +667,7 @@ u64 _mvs(struct mstack* ms, const struct position* p, const bool turn, const boo
         const u32 ep = p->ep_target;
 
         for(pc = PATTS_BB(p->ep_target, !turn) & PC_BB(p, PAWN, turn); pc; pc = pop_lsb(pc)) {
-            const u32 from          = tzcnt(pc);
+            from = tzcnt(pc);
 
             const bitboard all_nop  = ALL_BB(p) ^ (sqr_bb(from) | sqr_bb(ep) | sqr_bb(ep + up_d));
 
@@ -677,8 +688,8 @@ u64 _mvs(struct mstack* ms, const struct position* p, const bool turn, const boo
 
     atts = shift(pc, up) & empty & target; 
     if(gen) {
-        genmvs_push_pawnbb(ms, atts & ~final, up_d, false);
-        genmvs_push_pawnbb(ms, atts &  final, up_d, true);
+        _mvs_push_pawnbb(ms, atts & ~final, up_d, false);
+        _mvs_push_pawnbb(ms, atts &  final, up_d, true);
     } else {
         count += popcnt(atts &  final) * 4;
         count += popcnt(atts & ~final);
@@ -686,8 +697,8 @@ u64 _mvs(struct mstack* ms, const struct position* p, const bool turn, const boo
 
     atts = shift(pc, upr) & opps & target; 
     if(gen) {
-        genmvs_push_pawnbb(ms, atts & ~final, upr_d, false);
-        genmvs_push_pawnbb(ms, atts &  final, upr_d, true);
+        _mvs_push_pawnbb(ms, atts & ~final, upr_d, false);
+        _mvs_push_pawnbb(ms, atts &  final, upr_d, true);
     } else {
         count += popcnt(atts &  final) * 4;
         count += popcnt(atts & ~final);
@@ -695,50 +706,54 @@ u64 _mvs(struct mstack* ms, const struct position* p, const bool turn, const boo
 
     atts = shift(pc, upl) & opps & target; 
     if(gen) {
-        genmvs_push_pawnbb(ms, atts & ~final, upl_d, false);
-        genmvs_push_pawnbb(ms, atts &  final, upl_d, true);
+        _mvs_push_pawnbb(ms, atts & ~final, upl_d, false);
+        _mvs_push_pawnbb(ms, atts &  final, upl_d, true);
     } else {
         count += popcnt(atts &  final) * 4;
         count += popcnt(atts & ~final);
     }
 
     atts = shift(shift(pc & dpush, up) & empty, up) & empty & target;
-    if(gen) genmvs_push_pawnbb(ms, atts, up2_d, false);
+    if(gen) _mvs_push_pawnbb(ms, atts, up2_d, false);
     else    count += popcnt(atts);
 
 
 
     for(pc = TYPE_BB(p, NIGHT) & which; pc; pc = pop_lsb(pc)) {
-        u32 from = tzcnt(pc);
+        from = tzcnt(pc);
+        atts = NATTS_BB(from) & target;
 
-        if(gen) genmvs_push_mvbb(ms, p, NIGHT, from, NATTS_BB(from) & target);
-        else    count += popcnt(NATTS_BB(tzcnt(pc)) & target);
+        if(gen) _mvs_push_mvbb(ms, p, NIGHT, from, atts);
+        else    count += popcnt(atts);
     }
 
     for(pc = TYPE_BB(p, BISHP) & which; pc; pc = pop_lsb(pc)) {
-        u32 from = tzcnt(pc);
+        from = tzcnt(pc);
+        atts = BATTS_BB(from, all) & target;
 
-        if(gen) genmvs_push_mvbb(ms, p, BISHP, from, BATTS_BB(from, all) & target);
-        else    count += popcnt(BATTS_BB(tzcnt(pc), all) & target);
+        if(gen) _mvs_push_mvbb(ms, p, BISHP, from, atts);
+        else    count += popcnt(atts);
     }
 
     for(pc = TYPE_BB(p, ROOK) & which; pc; pc = pop_lsb(pc)) {
-        u32 from = tzcnt(pc);
+        from = tzcnt(pc);
+        atts = RATTS_BB(from, all) & target;
 
-        if(gen) genmvs_push_mvbb(ms, p, ROOK, from, RATTS_BB(from, all) & target);
-        else    count += popcnt(RATTS_BB(tzcnt(pc), all) & target);
+        if(gen) _mvs_push_mvbb(ms, p, ROOK, from, atts);
+        else    count += popcnt(atts);
     }
 
     for(pc = TYPE_BB(p, QUEEN) & which; pc; pc = pop_lsb(pc)) {
-        u32 from = tzcnt(pc);
+        from = tzcnt(pc);
+        atts = QATTS_BB(from, all) & target;
 
-        if(gen) genmvs_push_mvbb(ms, p, QUEEN, from, QATTS_BB(from, all) & target);
-        else    count += popcnt(QATTS_BB(tzcnt(pc), all) & target);
+        if(gen) _mvs_push_mvbb(ms, p, QUEEN, from, atts);
+        else    count += popcnt(atts);
     }
 
 
 
-    const bitboard all_nok = ALL_BB(p) ^ sqr_bb(ksqr);
+    const bitboard all_nok = all ^ sqr_bb(ksqr);
 
     for(pc = KATTS_BB(ksqr) & ~us; pc; pc = pop_lsb(pc)) {
         u32 to = tzcnt(pc);
@@ -759,22 +774,22 @@ u64 _mvs(struct mstack* ms, const struct position* p, const bool turn, const boo
 }
 
 __attribute__((flatten))
-void _genmvsw(struct mstack* ms, const struct position* p) {
+void genmvsw(struct mstack* ms, const struct position* p) {
     _mvs(ms, p, WHITE, true);
 }
 
 __attribute__((flatten))
-void _genmvsb(struct mstack* ms, const struct position* p) {
+void genmvsb(struct mstack* ms, const struct position* p) {
     _mvs(ms, p, BLACK, true);
 }
 
 __attribute__((flatten))
-u64 _cntmvsw(const struct position* p) {
+u64 cntmvsw(const struct position* p) {
     return _mvs(NULL, p, WHITE, false);
 }
 
 __attribute__((flatten))
-u64 _cntmvsb(const struct position* p) {
+u64 cntmvsb(const struct position* p) {
     return _mvs(NULL, p, BLACK, false);
 }
 
@@ -786,14 +801,14 @@ u64 _cntmvsb(const struct position* p) {
 
 
 
+u64 _perft(const struct position* p, const u32 depth, const bool div) {
+    const bool w = p->turn == WHITE;
 
-u64 perft(const struct position* p, const u32 depth, const bool print) {
     if(depth < 2)
-        return depth ? (p->turn == WHITE ? _cntmvsw : _cntmvsb)(p) : 1;
-    
-    struct mstack ms = ms_new();
+        return depth ? (w ? cntmvsw : cntmvsb)(p) : 1;
 
-    (p->turn == WHITE ? _genmvsw : _genmvsb)(&ms, p);
+    struct mstack ms = ms_new();
+    (w ? genmvsw : genmvsb)(&ms, p);
 
     u64 c = 0;
 
@@ -803,10 +818,10 @@ u64 perft(const struct position* p, const u32 depth, const bool print) {
         struct position p2 = *p;
         makemv(&p2, m);
         
-        u64 t = perft(&p2, depth - 1, false);
+        u64 t = _perft(&p2, depth - 1, false);
         c += t;
 
-        if(print) {
+        if(div) {
             mv_print(m, false);
             printf(" %lu\n", t);
         }
@@ -815,23 +830,111 @@ u64 perft(const struct position* p, const u32 depth, const bool print) {
     return c;
 }
 
-u64 goperft(const u32 depth, const bool print, const char* fen) {
+
+
+
+
+
+
+
+
+struct task {
+    struct position p;
+    u32 depth;
+    u64 result;
+};
+
+struct {
+    struct task* ls;
+    size_t len, cap;
+    pthread_mutex_t lk;
+
+} tasks = {.lk = PTHREAD_MUTEX_INITIALIZER};
+
+
+void tasks_push(const struct position* p, const u32 depth) {
+    tasks.ls[tasks.len++] = (struct task){.p = *p, .depth = depth};
+}
+
+struct task* tasks_pop() {
+    struct task* t;
+
+    pthread_mutex_lock(&(tasks.lk));
+
+    t = tasks.len ? &tasks.ls[--tasks.len] : NULL;
+
+    pthread_mutex_unlock(&(tasks.lk));
+
+    return t;
+}
+
+void* worker(void* p) {
+    for(struct task* t; t = tasks_pop();) 
+        t->result = _perft(&t->p, t->depth, false);
+
+    return NULL;
+}
+
+void gentasks(const struct position* p, const u32 depth, const u32 taskd) {
+    if(!depth) {
+        tasks_push(p, taskd); 
+
+        return;
+    }
+
+    struct mstack ms = ms_new();
+    (p->turn == WHITE ? genmvsw : genmvsb)(&ms, p);
+
+    for(; ms.size; ) {
+        struct move m = ms_pop(&ms);
+
+        struct position p2 = *p;
+        makemv(&p2, m);
+
+        gentasks(&p2, depth - 1, taskd);
+    }
+}
+
+u64 perft(const char* fen, const u32 depth, const u8 threadc, const bool div, const bool print) {
     struct position p;
     pos_fen(&p, fen);
 
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    u64 t = (u64)(ts.tv_sec) * 1000000000ull + (u64)(ts.tv_nsec);
+    u64 result, t;
 
-    u64 c = perft(&p, depth, print);
+    if(threadc > 1) {
+        u32 d;
+        for(d = 0; ; ++d)
+            if((tasks.cap = _perft(&p, d, false)) >= threadc)
+                break;
 
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    t = (u64)(ts.tv_sec) * 1000000000ull + (u64)(ts.tv_nsec) - t;
+        tasks.ls = malloc(tasks.cap *sizeof(struct task));
+        gentasks(&p, d, depth - d);
+
+        pthread_t threads[threadc];
+
+        t = time_ns();
+
+        for(u32 i = 0; i < threadc; ++i) 
+            pthread_create(threads + i, NULL, worker, NULL);
+
+        for(u32 i = 0; i < threadc; ++i) 
+            pthread_join(threads[i], NULL);
+
+        result = 0;
+        for(size_t i = 0; i < tasks.cap; ++i)
+            result += tasks.ls[i].result;
+    } else {
+        t = time_ns();
+
+        result = _perft(&p, depth, div);
+    }
+
+    t = time_ns() - t;
 
     if(print)
-        printf("\n%lu (%lu nps)\n", c, (u64)((double)c / t * 1e9));
+        printf("\n%lu\n%.0fms (%.0f nps)\n", result, t / 1e6, (double)result / t * 1e9);
 
-    return c;
+    return result;
 }
 
 
@@ -842,20 +945,75 @@ u64 goperft(const u32 depth, const bool print, const char* fen) {
 
 
 
-#include "tests.h"
+struct {
+    const char* fen;
+    const uint32_t depth;
+    const uint64_t result;
+} const fens[] = 
+{
+    // https://www.chessprogramming.org/Perft_Results
+    { .fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -"                , .depth = 6, .result = 119060324ull   },    // startpos
+    { .fen = "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq -"    , .depth = 6, .result = 8031647685ull  },    // kiwipete
+    { .fen = "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - -"                               , .depth = 8, .result = 3009794393ull  },    // cpw3
+    { .fen = "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq -"        , .depth = 6, .result = 706045033ull   },    // cpw4
+    { .fen = "r2q1rk1/pP1p2pp/Q4n2/bbp1p3/Np6/1B3NBn/pPPP1PPP/R3K2R b KQ -"        , .depth = 6, .result = 706045033ull   },    // cpw4 (mirrored)
+    { .fen = "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ -"               , .depth = 6, .result = 3048196529ull  },    // cpw5
+    { .fen = "r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - -" , .depth = 6, .result = 6923051137ull  },    // cpw6
 
-void runtests(const bool deep) {
-    const u32 u = deep ? 26 : 14;
+    // https://talkchess.com/viewtopic.php?p=405479
+    { .fen = "n1n5/PPPk4/8/8/8/8/4Kppp/5N1N b - -"                                 , .depth = 7, .result = 1482218224ull  },
+    { .fen = "r3k2r/pppp1ppp/1b3bnN/nP6/BBP1P3/q4NP1/P2P2PP/R2Q1RK1 w kq -"        , .depth = 6, .result = 538683019ull   },
+    
+    // https://www.talkchess.com/forum3/viewtopic.php?f=2&t=70543
+    { .fen = "r3k2r/1bp2pP1/5n2/1P1Q4/1pPq4/5N2/1B1P2p1/R3K2R b KQkq c3"           , .depth = 6, .result = 8419356881ull  },
+    { .fen = "r6r/1bp2pP1/R2qkn2/1P6/1pPQ4/1B3N2/1B1P2p1/4K2R b K c3"              , .depth = 6, .result = 10410709544ull },
+    { .fen = "r3k2r/1bp2pP1/5n2/1P1Q4/1pPq4/5N2/1B1P2p1/R1R1K2R b KQkq c3"         , .depth = 6, .result = 9299902790ull  },
+    { .fen = "8/K7/8/8/2Q1Pp1k/8/8/8 b - e3"                                       , .depth = 8, .result = 536974869ull   },
+
+    // from cpw4 at depth 7 
+    { .fen = "r3k2r/pppp1ppp/1b4nN/nPP5/BB2Pq1b/3P1NP1/P4KPP/R2Q1R2 w kq -"        , .depth = 6, .result = 2163726473ull  },
+
+    // some ordinary positions
+    { .fen = "r1bqk2r/pp3ppp/2nppn2/2p5/2PP4/2PBPN2/P4PPP/R1BQK2R w KQkq -"        , .depth = 6, .result = 2315917533ull  },
+    { .fen = "r1bqk1nr/ppp2pbp/2np2p1/4p3/2P5/2NP2P1/PP2PPBP/R1BQK1NR w KQkq -"    , .depth = 6, .result = 2333210325ull  },
+    { .fen = "1k6/8/PK6/8/8/8/8/8 b - -"                                           , .depth = 9, .result = 1554162ull     },
+
+    // positions from some perft 7 challenge threads
+    { .fen = "rnb1kbnr/pp1pp1pp/1qp2p2/8/Q1P5/N7/PP1PPPPP/1RB1KBNR b Kkq -"        , .depth = 7, .result = 14794751816ull  },   // https://www.talkchess.com/forum/viewtopic.php?t=59781  
+    { .fen = "rnbq1b1r/ppppkppp/4pn2/8/1Q6/2PP4/PP2PPPP/RNB1KBNR b KQ -"           , .depth = 7, .result = 3016055832ull   },   // https://www.talkchess.com/forum/viewtopic.php?t=59818 
+    { .fen = "rnbq1bnr/ppppk1pp/5p2/4p3/1Q6/2PP4/PP2PPPP/RNB1KBNR b KQ -"          , .depth = 7, .result = 4517445538ull   },   // https://www.talkchess.com/forum/viewtopic.php?t=59915 
+    { .fen = "rnbqk1nr/p1pp1ppp/1p6/2b1p1B1/8/1QPP4/PP2PPPP/RN2KBNR b KQkq -"      , .depth = 7, .result = 40552058742ull  },   // https://www.talkchess.com/forum/viewtopic.php?t=59957 
+    { .fen = "rnb1kbnr/ppp1pppp/8/3p4/1P6/P2P3q/2P1PPP1/RNBQKBNR b KQkq -"         , .depth = 7, .result = 44950307154ull  },   // https://www.talkchess.com/forum/viewtopic.php?t=59961 
+    { .fen = "rnb1kbnr/ppp1pppp/3p4/1q6/2BPP3/8/PPPQ1PPP/RNB1K1NR b KQkq -"        , .depth = 7, .result = 115009794943ull },   // https://www.talkchess.com/forum/viewtopic.php?t=60102 
+    { .fen = "rn1qkbnr/ppp2ppp/3pp3/8/3PP1b1/5Q2/PPP2PPP/RNB1KBNR b KQkq -"        , .depth = 7, .result = 75528515636ull  },   // https://www.talkchess.com/forum/viewtopic.php?t=60114 
+    { .fen = "rnbqkb1r/1pppppp1/p4n1p/1B6/4P3/4Q3/PPPP1PPP/RNB1K1NR b KQkq -"      , .depth = 7, .result = 18436658361ull  },   // https://www.talkchess.com/forum/viewtopic.php?t=61329 
+    { .fen = "rnbqkb1r/1pppppp1/p4n1p/1B6/4PP2/5Q2/PPPP2PP/RNB1K1NR b KQkq -"      , .depth = 7, .result = 15669029401ull  },
+};
+
+void runtests(const bool all) {
+    const u32 u = all ? 26 : 14;
+
+    u64 t = time_ns();
 
     for(u32 i = 0; i < u; ++i) {
         printf("\r%u / %u", i, u);
         fflush(stdout);
 
-        if(goperft(fens[i].depth, false, fens[i].fen) != fens[i].result)
+        if(perft(fens[i].fen, fens[i].depth, 1, false, false) != fens[i].result)
             printf("\nfailed: %s\n", fens[i].fen);
     }    
 
-    printf("\n");
+    printf("\ncompleted tests in %.0fs\n", (time_ns() - t) / 1e9);
+}
+
+void pgo() {
+    struct position p;
+
+    pos_fen(&p, NULL);
+    _perft(&p, 6, false);
+
+    pos_fen(&p, fens[1].fen);
+    _perft(&p, 6, false);
 }
 
 
@@ -868,33 +1026,63 @@ void runtests(const bool deep) {
 
 int main(int argc, char** argv) {
     const char* fen = NULL;
+    u32 threadc = 1;
+    u32 depth = 6;
+    bool div = false;
 
-    const u32 d = argc > 2 ? atoi(argv[2]) : 6;
-
-    if(argc > 1) {
-        if(!strcmp(argv[1], "buildpgo")) {
-            goperft(6, false, fens[0].fen);
-            goperft(6, false, fens[1].fen);
-
-            return 0;
-        }
-
-        if(!strcmp(argv[1], "test")) {
-            bool deep = argc > 2 ? !strcmp(argv[2], "deep") : false;
-
-            runtests(deep);
+    for(u32 i = 1; i < argc; ++i) {
+        if(!strcmp(argv[i], "--pgo")) {
+            pgo();
 
             return 0;
         }
 
-        if(!strcmp(argv[1], "kiwipete")) 
+        else if(!strcmp(argv[i], "--test")) {
+            runtests(i + 1 < argc && !strcmp(argv[i + 1], "all"));
+
+            return 0;
+        }
+
+        else if(!strcmp(argv[i], "--fen"))
+            fen = argv[++i];
+
+        else if(!strcmp(argv[i], "--kiwipete")) 
             fen = fens[1].fen;
 
-        else if(strcmp(argv[1], "startpos")) 
-            fen = argv[1];
+        else if(!strcmp(argv[i], "--depth")) 
+            depth = atoi(argv[++i]);
+
+        else if(!strcmp(argv[i], "--threads")) 
+            threadc = atoi(argv[++i]);
+
+        else if(!strcmp(argv[i], "--div")) 
+            div = true;
+
+        else if(!strcmp(argv[i], "--help")) {
+            printf(
+                    "usage: ./a.out [options]\n\n"
+                    "options:\n"
+                    "--fen \"\"    : set root position (default: start position)\n"
+                    "--depth n   : search to depth n (default: 6)\n"
+                    "--threads n : use n threads     (default: 1, will ignore --div flag if n > 1)\n"
+                    "--kiwipete  : use kiwipete position\n"
+                    "--div       : show result for each move\n");
+
+            return 0;
+        }
+        
+        else {
+            printf("invalid option \"%s\"\n", argv[i]);
+
+            return 1;
+        }
     }
 
-    goperft(d, true, fen);
-    
+    printf("\ngoing perft with fen=%s, depth=%u, threads=%u, div=%s\n",
+            fen ? fen : "startpos", depth, threadc, (div &= threadc < 2) ? "true" : "false");
+    fflush(stdout);
+
+    perft(fen, depth, threadc, div, true);
+
     return 0;
 }
