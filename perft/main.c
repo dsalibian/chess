@@ -452,7 +452,7 @@ bitboard genpins(const struct position* p) {
     return bb;
 }
 
-void makemv(struct position* p, const struct move m) {
+void _makemv(struct position* p, const struct move m, const bool turn) {
     const u32 from          = m.from;
     const u32 to            = m.to;
     const u32 moved         = m.type;
@@ -461,7 +461,6 @@ void makemv(struct position* p, const struct move m) {
     const bitboard to_bb    = sqr_bb(to);
     const bitboard mv_bb    = from_bb | to_bb;
 
-    const bool turn         = p->turn;
     const bool w            = turn == WHITE;
 
     const bitboard opps     = COLOR_BB(p, !turn);
@@ -520,6 +519,15 @@ void makemv(struct position* p, const struct move m) {
     }
 }
 
+__attribute__((flatten))
+void makemvw(struct position* p, const struct move m) {
+    _makemv(p, m, WHITE);
+}
+
+__attribute__((flatten))
+void makemvb(struct position* p, const struct move m) {
+    _makemv(p, m, BLACK);
+}
 
 
 
@@ -557,8 +565,7 @@ u64 _mvs(struct mstack* ms, const struct position* p, const bool turn, const boo
     const u32      ksqr     = p->ksqr[turn];
 
     const bitboard checker  = gencheckers(p); 
-    const bitboard pin      = genpins(p);
-    const bitboard pinned   = us & pin;
+    const bitboard pinned   = genpins(p) & us;
 
     const bitboard dpush    = w ? RANK_2 : RANK_7;
     const bitboard promo    = w ? RANK_7 : RANK_2;
@@ -669,7 +676,7 @@ u64 _mvs(struct mstack* ms, const struct position* p, const bool turn, const boo
         for(pc = PATTS_BB(p->ep_target, !turn) & PC_BB(p, PAWN, turn); pc; pc = pop_lsb(pc)) {
             from = tzcnt(pc);
 
-            const bitboard all_nop  = ALL_BB(p) ^ (sqr_bb(from) | sqr_bb(ep) | sqr_bb(ep + up_d));
+            const bitboard all_nop  = all ^ (sqr_bb(from) | sqr_bb(ep) | sqr_bb(ep + up_d));
 
             const bitboard xray_b   = BATTS_BB(ksqr, all_nop);
             const bitboard xray_r   = RATTS_BB(ksqr, all_nop);
@@ -816,7 +823,7 @@ u64 _perft(const struct position* p, const u32 depth, const bool div) {
         struct move m = ms_pop(&ms);
 
         struct position p2 = *p;
-        makemv(&p2, m);
+        (w ? makemvw : makemvb)(&p2, m);
         
         u64 t = _perft(&p2, depth - 1, false);
         c += t;
@@ -889,7 +896,7 @@ void gentasks(const struct position* p, const u32 depth, const u32 taskd) {
         struct move m = ms_pop(&ms);
 
         struct position p2 = *p;
-        makemv(&p2, m);
+        (p->turn == WHITE ? makemvw : makemvb)(&p2, m);
 
         gentasks(&p2, depth - 1, taskd);
     }
@@ -1078,7 +1085,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    printf("\ngoing perft with fen=%s, depth=%u, threads=%u, div=%s\n",
+    printf("going perft with fen=%s, depth=%u, threads=%u, div=%s\n",
             fen ? fen : "startpos", depth, threadc, (div &= threadc < 2) ? "true" : "false");
     fflush(stdout);
 
